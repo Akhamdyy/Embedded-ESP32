@@ -1,26 +1,22 @@
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "driver/gpio.h"
+#include "motor.h"
+#include "ultrasonic.h"
 
-#define BLINK_GPIO 2  // Most ESP32 DevKits have an LED on GPIO 2
+/* Measure and log distance every 100ms */
+#define ULTRASONIC_INTERVAL_MS  100
 
-void app_main(void) {
-    // 1. Configure the peripheral (GPIO)
-    gpio_reset_pin(BLINK_GPIO);
-    gpio_set_direction(BLINK_GPIO, GPIO_MODE_OUTPUT);
+void app_main(void)
+{
+    Motor_init();
+    Ultrasonic_init(ULTRASONIC_INTERVAL_MS);
 
-    printf("Starting ESP-IDF Blink (Pure C)\n");
+    printf("System initialized\n");
 
-    while (1) {
-        // 2. Set the GPIO level to 1 (High)
-        gpio_set_level(BLINK_GPIO, 1);
-        printf("LED ON\n");
-        vTaskDelay(1000 / portTICK_PERIOD_MS); // Delay for 1 second
-
-        // 3. Set the GPIO level to 0 (Low)
-        gpio_set_level(BLINK_GPIO, 0);
-        printf("LED OFF\n");
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+    /* All logic is timer/interrupt driven - nothing to do in the main loop */
+    while (1)
+    {
+        vTaskDelay(portMAX_DELAY);
     }
 }
