@@ -5,8 +5,8 @@
  * File Name: motor.h
  *
  * Description: Header file for 4WD motor control using dual H-bridge drivers.
- *              PWM speed control is handled via the ESP32 LEDC peripheral.
- *              Direction control uses the project GPIO driver.
+ *              PWM speed control is handled via the PWM MCAL driver (pwm.h).
+ *              Direction control uses the GPIO MCAL driver (gpio.h).
  *
  * Wiring (per H-bridge, e.g. L298N):
  *

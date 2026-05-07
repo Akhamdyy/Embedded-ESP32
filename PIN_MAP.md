@@ -3,6 +3,7 @@
 Board: **ESP32-WROOM-32**
 Framework: **ESP-IDF**
 Last updated: 2026-05-07
+Last updated: 2026-05-07
 
 ---
 
@@ -69,9 +70,29 @@ GPIO number each port/pin resolves to.
 |------|--------------|-------------|------------|----------------------------------------------|
 |  26  | PORTC PIN0   | Front       | TRIG       | Direct connection                            |
 |  34  | PORTC PIN4 ★ | Front       | ECHO       | Via voltage divider: 1kΩ + 2kΩ (5V → 3.3V) |
+|  34  | PORTC PIN4 ★ | Front       | ECHO       | Via voltage divider: 1kΩ + 2kΩ (5V → 3.3V) |
 |  32  | PORTC PIN2   | Left        | TRIG       | Direct connection                            |
 |  35  | PORTC PIN5 ★ | Left        | ECHO       | Via voltage divider: 1kΩ + 2kΩ (5V → 3.3V) |
+|  35  | PORTC PIN5 ★ | Left        | ECHO       | Via voltage divider: 1kΩ + 2kΩ (5V → 3.3V) |
 |  4   | PORTA PIN2   | Right       | TRIG       | Direct connection                            |
+|  36  | PORTC PIN6 ★ | Right       | ECHO       | Via voltage divider: 1kΩ + 2kΩ (5V → 3.3V) |
+
+★ = Input-only GPIO. ECHO lines are inputs only — no output needed. Internal pull-down unavailable; voltage divider provides passive pull-down.
+
+---
+
+### MPU-6050 (IMU — Gyroscope + Accelerometer)
+
+| GPIO | Port/Pin     | MPU-6050 Pin | Notes                              |
+|------|--------------|--------------|-------------------------------------|
+|  27  | PORTC PIN1   | SDA          | I2C data — I2C_NUM_0               |
+|  33  | PORTC PIN3   | SCL          | I2C clock — I2C_NUM_0              |
+|  —   | —            | VCC          | 3.3V                               |
+|  —   | —            | GND          | GND                                |
+|  —   | —            | AD0          | GND → I2C address 0x68             |
+|  —   | —            | INT          | Not connected                      |
+|  —   | —            | XDA          | Not connected                      |
+|  —   | —            | XCL          | Not connected                      |
 |  36  | PORTC PIN6 ★ | Right       | ECHO       | Via voltage divider: 1kΩ + 2kΩ (5V → 3.3V) |
 
 ★ = Input-only GPIO. ECHO lines are inputs only — no output needed. Internal pull-down unavailable; voltage divider provides passive pull-down.
@@ -101,6 +122,7 @@ These pins are not currently assigned to any peripheral.
 |------|--------------|--------------|-----------------------------------------------|
 |  0   | PORTA PIN0   | Input/Output | Strapping pin — internal pull-up, boot button |
 |  5   | PORTA PIN3   | Input/Output | Strapping pin — internal pull-up during boot  |
+|  5   | PORTA PIN3   | Input/Output | Strapping pin — internal pull-up during boot  |
 |  39  | PORTC PIN7   | Input ONLY   | No output driver (labelled VN on board)       |
 
 ---
@@ -127,7 +149,13 @@ These pins are not currently assigned to any peripheral.
 | Ultrasonic (TRIG) | 26, 32, 4                          | 3     |
 | Ultrasonic (ECHO) | 34, 35, 36                         | 3     |
 | MPU-6050 (I2C)    | 27, 33                             | 2     |
+| Ultrasonic (ECHO) | 34, 35, 36                         | 3     |
+| MPU-6050 (I2C)    | 27, 33                             | 2     |
 | On-board LED      | 2                                  | 1     |
+| **Used total**    |                                    | **21**|
+| Available I/O     | 0, 5                               | 2     |
+| Available input   | 39                                 | 1     |
+| **Available total**|                                   | **3** |
 | **Used total**    |                                    | **21**|
 | Available I/O     | 0, 5                               | 2     |
 | Available input   | 39                                 | 1     |
