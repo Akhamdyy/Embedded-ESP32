@@ -12,6 +12,7 @@
 
 #include "gpio.h"
 #include "driver/gpio.h"
+#include "esp_attr.h"
 
 /*******************************************************************************
  *                         Private Data                                        *
@@ -37,6 +38,9 @@ static const gpio_num_t gpio_map[NUM_OF_PORTS][NUM_OF_PINS_PER_PORT] = {
  * All pins default to PIN_INPUT (matches ESP32 reset state).
  */
 static GPIO_PinDirectionType pin_direction[NUM_OF_PORTS][NUM_OF_PINS_PER_PORT];
+
+/* Prevents calling gpio_install_isr_service more than once */
+static boolean isr_service_installed = FALSE;
 
 /*******************************************************************************
  *                          Functions Definitions                              *
@@ -109,7 +113,7 @@ void GPIO_writePin(uint8 port_num, uint8 pin_num, uint8 value)
  * Read and return the value for the required pin, it should be Logic High or Logic Low.
  * If the input port number or pin number are not correct, The function will return Logic Low.
  */
-uint8 GPIO_readPin(uint8 port_num, uint8 pin_num)
+IRAM_ATTR uint8 GPIO_readPin(uint8 port_num, uint8 pin_num)
 {
     if ((pin_num >= NUM_OF_PINS_PER_PORT) || (port_num >= NUM_OF_PORTS))
     {
@@ -187,4 +191,66 @@ uint8 GPIO_readPort(uint8 port_num)
         }
     }
     return value;
+}
+
+/*
+ * Description :
+ * Set the pull-up or pull-down resistor for a pin already configured as input.
+ */
+void GPIO_setPullMode(uint8 port_num, uint8 pin_num, GPIO_PullType pull)
+{
+    if ((pin_num >= NUM_OF_PINS_PER_PORT) || (port_num >= NUM_OF_PORTS))
+    {
+        return;
+    }
+
+    gpio_num_t gpio = gpio_map[port_num][pin_num];
+
+    switch (pull)
+    {
+    case GPIO_PULL_UP:
+        gpio_set_pull_mode(gpio, GPIO_PULLUP_ONLY);
+        break;
+    case GPIO_PULL_DOWN:
+        gpio_set_pull_mode(gpio, GPIO_PULLDOWN_ONLY);
+        break;
+    case GPIO_PULL_NONE:
+    default:
+        gpio_set_pull_mode(gpio, GPIO_FLOATING);
+        break;
+    }
+}
+
+/*
+ * Description :
+ * Enable edge-triggered interrupt on an input pin and register an ISR handler.
+ */
+void GPIO_enableInterrupt(uint8 port_num, uint8 pin_num, GPIO_IntrTrigger trigger,
+                          GPIO_IsrCallback callback, void *arg)
+{
+    if ((pin_num >= NUM_OF_PINS_PER_PORT) || (port_num >= NUM_OF_PORTS))
+    {
+        return;
+    }
+
+    gpio_num_t gpio = gpio_map[port_num][pin_num];
+
+    gpio_int_type_t esp_intr;
+    switch (trigger)
+    {
+    case GPIO_INTR_RISING_EDGE:  esp_intr = GPIO_INTR_POSEDGE; break;
+    case GPIO_INTR_FALLING_EDGE: esp_intr = GPIO_INTR_NEGEDGE; break;
+    case GPIO_INTR_ANY_EDGE:
+    default:                     esp_intr = GPIO_INTR_ANYEDGE; break;
+    }
+
+    gpio_set_intr_type(gpio, esp_intr);
+
+    if (!isr_service_installed)
+    {
+        gpio_install_isr_service(0);
+        isr_service_installed = TRUE;
+    }
+
+    gpio_isr_handler_add(gpio, callback, arg);
 }

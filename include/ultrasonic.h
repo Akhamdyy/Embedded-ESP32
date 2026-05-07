@@ -4,9 +4,10 @@
  *
  * File Name: ultrasonic.h
  *
- * Description: Header file for HC-SR04 ultrasonic distance sensor driver.
- *              Supports 3 sensors (Front, Left, Right).
+ * Description: Header file for HC-SR04 ultrasonic distance sensor driver
+ *              (HAL layer). Supports 3 sensors (Front, Left, Right).
  *              Fully timer and interrupt driven - no blocking delays.
+ *              Uses GPIO MCAL (gpio.h) and Timer MCAL (timer.h).
  *
  * Wiring:
  *   All sensors:

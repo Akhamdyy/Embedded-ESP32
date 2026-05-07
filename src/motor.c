@@ -102,7 +102,7 @@ static void Motor_applyDirection(Motor_ID motor, Motor_Direction direction)
 
 /*
  * Description :
- * Initialize all 4 motors: configure LEDC PWM channels and direction GPIO pins.
+ * Initialize all 4 motors: configure PWM channels and direction GPIO pins.
  */
 void Motor_init(void)
 {
@@ -164,7 +164,7 @@ void Motor_setDirection(Motor_ID motor, Motor_Direction direction)
 void Motor_drive(Motor_ID motor, Motor_Direction direction, uint8 speed)
 {
     Motor_applyDirection(motor, direction);
-    Motor_setSpeed(motor, speed);
+    PWM_setDuty(motor_cfg[motor].pwm_channel, speed);
 }
 
 /*
@@ -173,7 +173,7 @@ void Motor_drive(Motor_ID motor, Motor_Direction direction, uint8 speed)
  */
 void Motor_stop(Motor_ID motor)
 {
-    Motor_setSpeed(motor, MOTOR_MIN_SPEED);
+    PWM_setDuty(motor_cfg[motor].pwm_channel, MOTOR_MIN_SPEED);
     Motor_applyDirection(motor, MOTOR_STOP);
 }
 
