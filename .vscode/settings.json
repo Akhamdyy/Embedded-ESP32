@@ -1,0 +1,5 @@
+{
+  "C_Cpp.default.configurationProvider": "platformio.platformio-ide",
+  "C_Cpp.default.compileCommands": "${workspaceFolder}/.pio/build/esp32doit-devkit-v1/compile_commands.json",
+  "C_Cpp.default.compilerPath": "C:/Users/civil/.platformio/packages/toolchain-xtensa-esp-elf/bin/xtensa-esp32-elf-gcc.exe"
+}

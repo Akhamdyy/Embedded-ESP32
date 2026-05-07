@@ -110,4 +110,20 @@ void Motor_stopAll(void);
  */
 void Motor_driveAll(Motor_Direction direction, uint8 speed);
 
+/*
+ * Description :
+ * Active brake all 4 motors (both direction pins HIGH, PWM = 0).
+ */
+void Motor_brakeAll(void);
+
+/*
+ * Description :
+ * Car-level helpers built on top of low-level motor PWM and direction control.
+ * left_speed/right_speed: 0-255
+ */
+void Car_moveForward(uint8 left_speed, uint8 right_speed);
+void Car_moveBackward(uint8 left_speed, uint8 right_speed);
+void Car_turnLeft(uint8 left_speed, uint8 right_speed);
+void Car_turnRight(uint8 left_speed, uint8 right_speed);
+
 #endif /* MOTOR_H_ */

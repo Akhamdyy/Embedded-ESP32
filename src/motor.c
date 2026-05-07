@@ -1,48 +1,40 @@
 /******************************************************************************
  *
- * Module: Motor Control
+ * Module: Motor Control (HAL)
  *
  * File Name: motor.c
  *
- * Description: Source file for 4WD motor control.
- *              - Speed: ESP32 LEDC peripheral (PWM)
- *              - Direction: Project GPIO driver
+ * Description: HAL source file for 4WD motor control.
+ *              - Speed: Pwm_setDuty() via MCAL pwm driver (no LEDC direct use)
+ *              - Direction: GPIO_writePin() via MCAL gpio driver
+ *              - Pin/channel mapping: board_pins.h (single source of truth)
  *
  *******************************************************************************/
 
 #include "motor.h"
 #include "gpio.h"
-#include "driver/ledc.h"
+#include "pwm.h"
+#include "board_pins.h"
 
 /*******************************************************************************
  *                         Private Definitions                                 *
  *******************************************************************************/
 
-/* PWM configuration */
-#define MOTOR_PWM_FREQ_HZ       1000
-#define MOTOR_PWM_RESOLUTION    LEDC_TIMER_8_BIT   /* 0 - 255 */
-#define MOTOR_PWM_TIMER         LEDC_TIMER_0
-#define MOTOR_PWM_SPEED_MODE    LEDC_HIGH_SPEED_MODE
-
-/* Number of motors */
-#define MOTOR_COUNT             4
+#define MOTOR_COUNT     4
 
 /*******************************************************************************
  *                         Private Data Types                                  *
  *******************************************************************************/
 
-/* Holds the GPIO configuration for one motor */
+/* Per-motor static configuration resolved from board_pins.h */
 typedef struct
 {
-    /* LEDC channel for PWM (speed) */
-    ledc_channel_t pwm_channel;
-    int            pwm_gpio;
-
-    /* Direction pins (port/pin for the GPIO driver) */
-    uint8 in1_port;
-    uint8 in1_pin;
-    uint8 in2_port;
-    uint8 in2_pin;
+    Pwm_ChannelID pwm_channel;
+    int           pwm_gpio;
+    uint8         in1_port;
+    uint8         in1_pin;
+    uint8         in2_port;
+    uint8         in2_pin;
 } Motor_Config;
 
 /*******************************************************************************
@@ -50,19 +42,24 @@ typedef struct
  *******************************************************************************/
 
 /*
- * Motor configuration table.
- * Index matches Motor_ID enum values.
+ * Motor configuration table — all pin/channel assignments come from
+ * board_pins.h. Changing wiring only requires editing that one file.
  *
- *  MOTOR_FRONT_LEFT  [0]: PWM=GPIO12, IN1=GPIO16(PORTB,P0), IN2=GPIO17(PORTB,P1)
- *  MOTOR_REAR_LEFT   [1]: PWM=GPIO13, IN1=GPIO18(PORTB,P2), IN2=GPIO19(PORTB,P3)
- *  MOTOR_FRONT_RIGHT [2]: PWM=GPIO14, IN1=GPIO21(PORTB,P4), IN2=GPIO22(PORTB,P5)
- *  MOTOR_REAR_RIGHT  [3]: PWM=GPIO15, IN1=GPIO23(PORTB,P6), IN2=GPIO25(PORTB,P7)
+ * Index matches Motor_ID enum values.
  */
 static const Motor_Config motor_cfg[MOTOR_COUNT] = {
-    /* FRONT_LEFT  */ { LEDC_CHANNEL_0, 12, PORTB_ID, PIN0_ID, PORTB_ID, PIN1_ID },
-    /* REAR_LEFT   */ { LEDC_CHANNEL_1, 13, PORTB_ID, PIN2_ID, PORTB_ID, PIN3_ID },
-    /* FRONT_RIGHT */ { LEDC_CHANNEL_2, 14, PORTB_ID, PIN4_ID, PORTB_ID, PIN5_ID },
-    /* REAR_RIGHT  */ { LEDC_CHANNEL_3, 15, PORTB_ID, PIN6_ID, PORTB_ID, PIN7_ID },
+    /* FRONT_LEFT  */ { MOTOR_FL_PWM_CHANNEL, MOTOR_FL_PWM_GPIO,
+                        MOTOR_FL_IN1_PORT, MOTOR_FL_IN1_PIN,
+                        MOTOR_FL_IN2_PORT, MOTOR_FL_IN2_PIN },
+    /* REAR_LEFT   */ { MOTOR_RL_PWM_CHANNEL, MOTOR_RL_PWM_GPIO,
+                        MOTOR_RL_IN1_PORT, MOTOR_RL_IN1_PIN,
+                        MOTOR_RL_IN2_PORT, MOTOR_RL_IN2_PIN },
+    /* FRONT_RIGHT */ { MOTOR_FR_PWM_CHANNEL, MOTOR_FR_PWM_GPIO,
+                        MOTOR_FR_IN1_PORT, MOTOR_FR_IN1_PIN,
+                        MOTOR_FR_IN2_PORT, MOTOR_FR_IN2_PIN },
+    /* REAR_RIGHT  */ { MOTOR_RR_PWM_CHANNEL, MOTOR_RR_PWM_GPIO,
+                        MOTOR_RR_IN1_PORT, MOTOR_RR_IN1_PIN,
+                        MOTOR_RR_IN2_PORT, MOTOR_RR_IN2_PIN },
 };
 
 /*******************************************************************************
@@ -111,37 +108,32 @@ void Motor_init(void)
 {
     uint8 i;
 
-    /* --- Configure the shared LEDC timer --- */
-    ledc_timer_config_t timer_cfg = {
-        .speed_mode      = MOTOR_PWM_SPEED_MODE,
-        .duty_resolution = MOTOR_PWM_RESOLUTION,
-        .timer_num       = MOTOR_PWM_TIMER,
-        .freq_hz         = MOTOR_PWM_FREQ_HZ,
-        .clk_cfg         = LEDC_AUTO_CLK,
+    /* Configure the shared PWM timer via MCAL */
+    const Pwm_TimerConfig timer_cfg = {
+        .timer     = MOTOR_PWM_TIMER,
+        .freq_hz   = MOTOR_PWM_FREQ_HZ,
+        .duty_bits = MOTOR_PWM_DUTY_BITS,
     };
-    ledc_timer_config(&timer_cfg);
+    Pwm_timerInit(&timer_cfg);
 
-    /* --- Configure each motor --- */
+    /* Configure each motor's PWM channel and direction GPIO pins */
     for (i = 0; i < MOTOR_COUNT; i++)
     {
         const Motor_Config *cfg = &motor_cfg[i];
 
-        /* PWM channel */
-        ledc_channel_config_t ch_cfg = {
-            .gpio_num   = cfg->pwm_gpio,
-            .speed_mode = MOTOR_PWM_SPEED_MODE,
-            .channel    = cfg->pwm_channel,
-            .timer_sel  = MOTOR_PWM_TIMER,
-            .duty       = 0,
-            .hpoint     = 0,
+        /* PWM channel via MCAL — no LEDC types visible here */
+        const Pwm_ChannelConfig ch_cfg = {
+            .channel  = cfg->pwm_channel,
+            .timer    = MOTOR_PWM_TIMER,
+            .gpio_num = cfg->pwm_gpio,
         };
-        ledc_channel_config(&ch_cfg);
+        Pwm_channelInit(&ch_cfg);
 
-        /* Direction pins */
+        /* Direction pins via MCAL GPIO */
         GPIO_setupPinDirection(cfg->in1_port, cfg->in1_pin, PIN_OUTPUT);
         GPIO_setupPinDirection(cfg->in2_port, cfg->in2_pin, PIN_OUTPUT);
 
-        /* Start with motor stopped */
+        /* Start braked (both IN pins HIGH) */
         GPIO_writePin(cfg->in1_port, cfg->in1_pin, LOGIC_HIGH);
         GPIO_writePin(cfg->in2_port, cfg->in2_pin, LOGIC_HIGH);
     }
@@ -153,9 +145,7 @@ void Motor_init(void)
  */
 void Motor_setSpeed(Motor_ID motor, uint8 speed)
 {
-    const Motor_Config *cfg = &motor_cfg[motor];
-    ledc_set_duty(MOTOR_PWM_SPEED_MODE, cfg->pwm_channel, speed);
-    ledc_update_duty(MOTOR_PWM_SPEED_MODE, cfg->pwm_channel);
+    Pwm_setDuty(motor_cfg[motor].pwm_channel, speed);
 }
 
 /*
@@ -211,4 +201,62 @@ void Motor_driveAll(Motor_Direction direction, uint8 speed)
     {
         Motor_drive((Motor_ID)i, direction, speed);
     }
+}
+
+/*
+ * Description :
+ * Active brake all 4 motors.
+ */
+void Motor_brakeAll(void)
+{
+    uint8 i;
+    for (i = 0; i < MOTOR_COUNT; i++)
+    {
+        Motor_setSpeed((Motor_ID)i, MOTOR_MIN_SPEED);
+        Motor_setDirection((Motor_ID)i, MOTOR_BRAKE);
+    }
+}
+
+/*
+ * Description :
+ * Move car forward. Left/right speeds set independently for drift correction.
+ */
+void Car_moveForward(uint8 left_speed, uint8 right_speed)
+{
+    Motor_drive(MOTOR_FRONT_LEFT,  MOTOR_FORWARD, left_speed);
+    Motor_drive(MOTOR_REAR_LEFT,   MOTOR_FORWARD, left_speed);
+    Motor_drive(MOTOR_FRONT_RIGHT, MOTOR_FORWARD, right_speed);
+    Motor_drive(MOTOR_REAR_RIGHT,  MOTOR_FORWARD, right_speed);
+}
+
+/*
+ * Description :
+ * Move car backward. Left/right speeds set independently.
+ */
+void Car_moveBackward(uint8 left_speed, uint8 right_speed)
+{
+    Motor_drive(MOTOR_FRONT_LEFT,  MOTOR_BACKWARD, left_speed);
+    Motor_drive(MOTOR_REAR_LEFT,   MOTOR_BACKWARD, left_speed);
+    Motor_drive(MOTOR_FRONT_RIGHT, MOTOR_BACKWARD, right_speed);
+    Motor_drive(MOTOR_REAR_RIGHT,  MOTOR_BACKWARD, right_speed);
+}
+
+/*
+ * Description :
+ * Turn left: left side slower, right side faster (differential drive).
+ * Pass (left_speed < right_speed) for a gradual curve.
+ */
+void Car_turnLeft(uint8 left_speed, uint8 right_speed)
+{
+    Car_moveForward(left_speed, right_speed);
+}
+
+/*
+ * Description :
+ * Turn right: right side slower, left side faster (differential drive).
+ * Pass (right_speed < left_speed) for a gradual curve.
+ */
+void Car_turnRight(uint8 left_speed, uint8 right_speed)
+{
+    Car_moveForward(left_speed, right_speed);
 }
