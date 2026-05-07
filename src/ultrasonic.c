@@ -1,10 +1,11 @@
 /******************************************************************************
  *
- * Module: Ultrasonic Sensor
+ * Module: Ultrasonic Sensor (Multi-Sensor)
  *
  * File Name: ultrasonic.c
  *
- * Description: Source file for the HC-SR04 ultrasonic distance sensor driver.
+ * Description: Source file for HC-SR04 ultrasonic distance sensor driver.
+ *              Supports 3 independent sensors with staggered firing.
  *              Fully timer and interrupt driven - no blocking delays.
  *
  *******************************************************************************/
@@ -19,9 +20,6 @@
  *                         Private Definitions                                 *
  *******************************************************************************/
 
-#define TRIG_GPIO           26
-#define ECHO_GPIO           27
-
 /* Trigger pulse width per HC-SR04 datasheet */
 #define TRIG_PULSE_US       10
 
@@ -32,17 +30,38 @@
 #define SOUND_DIVISOR       58
 
 /*******************************************************************************
+ *                         Private Type Definitions                            *
+ *******************************************************************************/
+
+typedef struct
+{
+    int         trig_gpio;
+    int         echo_gpio;
+    const char *name;
+} Ultrasonic_Config;
+
+typedef struct
+{
+    volatile int64_t   echo_start_us;
+    volatile boolean   echo_active;
+    volatile uint16_t  last_distance;
+    volatile boolean   data_ready;
+    esp_timer_handle_t trig_pulse_timer;
+} Ultrasonic_State;
+
+/*******************************************************************************
  *                         Private Data                                        *
  *******************************************************************************/
 
-static esp_timer_handle_t trig_pulse_timer;    /* One-shot: ends the trigger pulse */
-static esp_timer_handle_t measurement_timer;   /* Periodic: starts each measurement */
+static const Ultrasonic_Config sensor_cfg[ULTRASONIC_COUNT] = {
+    /* FRONT */ { 26, 27, "FRONT" },
+    /* LEFT  */ { 32, 33, "LEFT"  },
+    /* RIGHT */ {  4,  5, "RIGHT" },
+};
 
-static volatile int64_t  echo_start_us  = 0;
-static volatile int64_t  echo_end_us    = 0;
-static volatile uint16_t last_distance  = ULTRASONIC_OUT_OF_RANGE;
-static volatile boolean  data_ready     = FALSE;
-static volatile boolean  echo_active    = FALSE;
+static Ultrasonic_State sensor_state[ULTRASONIC_COUNT];
+
+static esp_timer_handle_t measurement_timer;   /* Periodic: triggers measurements */
 
 /*******************************************************************************
  *                         Private Functions                                   *
@@ -50,72 +69,72 @@ static volatile boolean  echo_active    = FALSE;
 
 /*
  * One-shot timer callback — fires 10µs after trigger went HIGH.
- * Pulls TRIG LOW to complete the trigger pulse.
+ * Pulls TRIG LOW to complete the trigger pulse for the specified sensor.
  */
 static void trig_pulse_timer_cb(void *arg)
 {
-    gpio_set_level(TRIG_GPIO, 0);
+    uint32_t idx = (uint32_t)arg;
+    gpio_set_level(sensor_cfg[idx].trig_gpio, 0);
 }
 
 /*
  * Periodic timer callback — fires every measurement_interval_ms.
- * Logs the last distance then starts a new measurement.
+ * Fires one sensor per tick in round-robin fashion.
  */
 static void measurement_timer_cb(void *arg)
 {
-    /* Log previous result */
-    if (last_distance == ULTRASONIC_OUT_OF_RANGE)
-    {
-        printf("[Ultrasonic] Distance: OUT OF RANGE\n");
-    }
-    else
-    {
-        printf("[Ultrasonic] Distance: %u cm\n", last_distance);
-    }
+    static uint32_t current = 0;
 
-    /* Reset state for new measurement */
-    echo_active   = FALSE;
-    data_ready    = FALSE;
-    echo_start_us = 0;
-    echo_end_us   = 0;
+    /* Log previous result for this slot */
+    uint16_t d = sensor_state[current].last_distance;
+    if (d == ULTRASONIC_OUT_OF_RANGE)
+        printf("[%s] OUT OF RANGE\n", sensor_cfg[current].name);
+    else
+        printf("[%s] %u cm\n", sensor_cfg[current].name, d);
 
     /* Start trigger pulse: pull HIGH then start one-shot timer to pull LOW */
-    gpio_set_level(TRIG_GPIO, 1);
-    esp_timer_start_once(trig_pulse_timer, TRIG_PULSE_US);
+    gpio_set_level(sensor_cfg[current].trig_gpio, 1);
+    esp_timer_start_once(sensor_state[current].trig_pulse_timer, TRIG_PULSE_US);
+
+    /* Advance to next sensor */
+    current = (current + 1) % ULTRASONIC_COUNT;
 }
 
 /*
- * GPIO ISR — called on both rising and falling edges of the Echo pin.
+ * GPIO ISR — called on both rising and falling edges of any Echo pin.
+ * The sensor index is passed as arg to identify which sensor fired.
  * Rising edge : record start time.
  * Falling edge: record end time, compute and store distance.
  */
 static void IRAM_ATTR echo_isr_handler(void *arg)
 {
-    if (gpio_get_level(ECHO_GPIO) == 1)
+    uint32_t idx = (uint32_t)arg;
+    Ultrasonic_State *s = &sensor_state[idx];
+
+    if (gpio_get_level(sensor_cfg[idx].echo_gpio) == 1)
     {
         /* Rising edge: echo pulse started */
-        echo_start_us = esp_timer_get_time();
-        echo_active   = TRUE;
+        s->echo_start_us = esp_timer_get_time();
+        s->echo_active   = TRUE;
     }
     else
     {
         /* Falling edge: echo pulse ended */
-        if (echo_active)
+        if (s->echo_active)
         {
-            echo_end_us = esp_timer_get_time();
-            int64_t duration_us = echo_end_us - echo_start_us;
+            int64_t duration_us = esp_timer_get_time() - s->echo_start_us;
 
             if (duration_us > 0 && duration_us < ECHO_TIMEOUT_US)
             {
-                last_distance = (uint16_t)(duration_us / SOUND_DIVISOR);
+                s->last_distance = (uint16_t)(duration_us / SOUND_DIVISOR);
             }
             else
             {
-                last_distance = ULTRASONIC_OUT_OF_RANGE;
+                s->last_distance = ULTRASONIC_OUT_OF_RANGE;
             }
 
-            data_ready  = TRUE;
-            echo_active = FALSE;
+            s->data_ready  = TRUE;
+            s->echo_active = FALSE;
         }
     }
 }
@@ -126,43 +145,54 @@ static void IRAM_ATTR echo_isr_handler(void *arg)
 
 /*
  * Description :
- * Initialize the ultrasonic sensor GPIO pins, interrupts, and timers.
+ * Initialize all 3 ultrasonic sensors (Front, Left, Right).
  */
-void Ultrasonic_init(uint32 measurement_interval_ms)
+void Ultrasonic_initAll(uint32 measurement_interval_ms)
 {
-    /* --- Trigger pin: output, start LOW --- */
-    gpio_config_t trig_cfg = {
-        .pin_bit_mask = (1ULL << TRIG_GPIO),
-        .mode         = GPIO_MODE_OUTPUT,
-        .pull_up_en   = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type    = GPIO_INTR_DISABLE,
-    };
-    gpio_config(&trig_cfg);
-    gpio_set_level(TRIG_GPIO, 0);
+    for (uint32_t i = 0; i < ULTRASONIC_COUNT; i++)
+    {
+        /* Initialize state */
+        sensor_state[i].echo_start_us  = 0;
+        sensor_state[i].echo_active    = FALSE;
+        sensor_state[i].last_distance  = ULTRASONIC_OUT_OF_RANGE;
+        sensor_state[i].data_ready     = FALSE;
 
-    /* --- Echo pin: input, interrupt on both edges --- */
-    gpio_config_t echo_cfg = {
-        .pin_bit_mask = (1ULL << ECHO_GPIO),
-        .mode         = GPIO_MODE_INPUT,
-        .pull_up_en   = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_ENABLE,
-        .intr_type    = GPIO_INTR_ANYEDGE,
-    };
-    gpio_config(&echo_cfg);
+        /* --- Trigger pin: output, start LOW --- */
+        gpio_config_t trig_cfg = {
+            .pin_bit_mask = (1ULL << sensor_cfg[i].trig_gpio),
+            .mode         = GPIO_MODE_OUTPUT,
+            .pull_up_en   = GPIO_PULLUP_DISABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type    = GPIO_INTR_DISABLE,
+        };
+        gpio_config(&trig_cfg);
+        gpio_set_level(sensor_cfg[i].trig_gpio, 0);
 
-    gpio_install_isr_service(0);
-    gpio_isr_handler_add(ECHO_GPIO, echo_isr_handler, NULL);
+        /* --- Echo pin: input, interrupt on both edges --- */
+        gpio_config_t echo_cfg = {
+            .pin_bit_mask = (1ULL << sensor_cfg[i].echo_gpio),
+            .mode         = GPIO_MODE_INPUT,
+            .pull_up_en   = GPIO_PULLUP_DISABLE,
+            .pull_down_en = GPIO_PULLDOWN_ENABLE,
+            .intr_type    = GPIO_INTR_ANYEDGE,
+        };
+        gpio_config(&echo_cfg);
 
-    /* --- One-shot timer: ends the 10µs trigger pulse --- */
-    const esp_timer_create_args_t trig_timer_args = {
-        .callback = trig_pulse_timer_cb,
-        .arg      = NULL,
-        .name     = "ultrasonic_trig",
-    };
-    esp_timer_create(&trig_timer_args, &trig_pulse_timer);
+        gpio_install_isr_service(0);
+        gpio_isr_handler_add(sensor_cfg[i].echo_gpio, echo_isr_handler, (void *)i);
 
-    /* --- Periodic timer: triggers measurements and logs results --- */
+        /* --- One-shot timer: ends the 10µs trigger pulse for this sensor --- */
+        char timer_name[20];
+        snprintf(timer_name, sizeof(timer_name), "us_trig_%s", sensor_cfg[i].name);
+        const esp_timer_create_args_t trig_timer_args = {
+            .callback = trig_pulse_timer_cb,
+            .arg      = (void *)i,
+            .name     = timer_name,
+        };
+        esp_timer_create(&trig_timer_args, &sensor_state[i].trig_pulse_timer);
+    }
+
+    /* --- Periodic timer: triggers measurements in round-robin fashion --- */
     const esp_timer_create_args_t meas_timer_args = {
         .callback = measurement_timer_cb,
         .arg      = NULL,
@@ -175,22 +205,28 @@ void Ultrasonic_init(uint32 measurement_interval_ms)
 
 /*
  * Description :
- * Return the last successfully measured distance in centimeters.
+ * Return the last successfully measured distance for the specified sensor (cm).
  */
-uint16 Ultrasonic_getDistance(void)
+uint16 Ultrasonic_getDistance(Ultrasonic_SensorID sensor)
 {
-    return last_distance;
+    if (sensor >= ULTRASONIC_COUNT)
+        return ULTRASONIC_OUT_OF_RANGE;
+
+    return sensor_state[sensor].last_distance;
 }
 
 /*
  * Description :
- * Return TRUE if a new measurement has completed since the last call.
+ * Return TRUE if a new measurement has completed for the specified sensor.
  */
-boolean Ultrasonic_isDataReady(void)
+boolean Ultrasonic_isDataReady(Ultrasonic_SensorID sensor)
 {
-    if (data_ready)
+    if (sensor >= ULTRASONIC_COUNT)
+        return FALSE;
+
+    if (sensor_state[sensor].data_ready)
     {
-        data_ready = FALSE;
+        sensor_state[sensor].data_ready = FALSE;
         return TRUE;
     }
     return FALSE;

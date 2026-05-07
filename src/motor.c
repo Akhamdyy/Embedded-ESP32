@@ -142,8 +142,8 @@ void Motor_init(void)
         GPIO_setupPinDirection(cfg->in2_port, cfg->in2_pin, PIN_OUTPUT);
 
         /* Start with motor stopped */
-        GPIO_writePin(cfg->in1_port, cfg->in1_pin, LOGIC_LOW);
-        GPIO_writePin(cfg->in2_port, cfg->in2_pin, LOGIC_LOW);
+        GPIO_writePin(cfg->in1_port, cfg->in1_pin, LOGIC_HIGH);
+        GPIO_writePin(cfg->in2_port, cfg->in2_pin, LOGIC_HIGH);
     }
 }
 

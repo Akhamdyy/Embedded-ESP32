@@ -1,0 +1,126 @@
+═══════════════════════════════════════════════════════════════
+  PHASE 1 DESIGN - HOW TO ADD DIAGRAMS
+═══════════════════════════════════════════════════════════════
+
+Your PHASE1_DESIGN.docx is ready! It has all 5 deliverables:
+
+1. ✓ Mechanical Design (with sensor placement specs)
+2. ✓ Electrical Design (pin config & power distribution)
+3. ✓ FSM Design (7 states + transition table + motor control)
+4. ✓ Algorithm Description (wall following, turn detection)
+5. ✓ Communication Plan (WiFi, JSON format)
+
+═══════════════════════════════════════════════════════════════
+
+NOW ADD THESE 2 DIAGRAMS USING DRAW.IO:
+
+═══════════════════════════════════════════════════════════════
+
+DIAGRAM 1: BLOCK DIAGRAM (Electrical Design section)
+─────────────────────────────────────────────────────
+
+Create in draw.io showing:
+
+        [12V Battery]
+             │
+        ┌────┴────┐
+        │          │
+        ▼          ▼
+    [H-Bridge] [5V Regulator]
+        │           │
+   ┌────┴────┐      │
+   │          │      │
+  [Motor] [Motor]   [HC-SR04]
+
+   [ESP32 Controller]
+   ├─ LEDC PWM (GPIO12-15)
+   ├─ Direction pins (GPIO16-25)
+   └─ Sensor pins (GPIO26-27)
+
+Steps:
+1. Go to https://draw.io
+2. Create new diagram
+3. Drag boxes for: Battery, H-bridges, Motors, ESP32, Sensor
+4. Connect with lines and labels
+5. Add GPIO pin labels
+6. Export as PNG or PDF
+7. Copy-paste image into Word document
+
+═══════════════════════════════════════════════════════════════
+
+DIAGRAM 2: FSM STATE DIAGRAM (FSM Design section)
+─────────────────────────────────────────────────
+
+Create in draw.io showing:
+
+[STRAIGHT_CORRIDOR]
+    ↓ (delta > 3cm)
+[TURN_DETECTED]
+    ↓ (LEFT/RIGHT)
+[EXECUTING_TURN]
+    ↓ (rotated 90°)
+[STRAIGHT_CORRIDOR] (cycle)
+
+With ERROR states:
+- ERROR_WALL_HIT (d < 8cm)
+- ERROR_LOST_TRACK (d > 25cm)
+- ERROR_TURN_TIMEOUT (>5 sec)
+All → [COMPLETE]
+
+Steps:
+1. Go to https://draw.io
+2. Create new diagram
+3. Add 7 circles for states
+4. Use arrows for transitions
+5. Label arrows with conditions
+6. Make ERROR states red
+7. Export as PNG or PDF
+8. Copy-paste image into Word document
+
+═══════════════════════════════════════════════════════════════
+
+HOW TO INSERT DIAGRAM INTO WORD:
+
+1. Open PHASE1_DESIGN.docx in Microsoft Word
+2. Go to the section that says "Create in draw.io..."
+3. Delete that line
+4. Click Insert → Pictures → This Device
+5. Select your diagram PNG/PDF file
+6. Click Insert
+7. Resize diagram to fit page
+8. Save
+
+═══════════════════════════════════════════════════════════════
+
+DRAW.IO QUICK START:
+
+Visit: https://draw.io (no login needed)
+
+1. Click "Create New Diagram"
+2. Choose "Blank Diagram"
+3. Left panel: Drag shapes (rectangle, circle, etc.)
+4. Connect with arrows
+5. Add text labels
+6. File → Export As → PNG (for Word)
+7. Copy/Paste into Word
+
+═══════════════════════════════════════════════════════════════
+
+FINAL STEPS:
+
+1. ✓ Open PHASE1_DESIGN.docx
+2. ✓ Add Block Diagram (electrical section)
+3. ✓ Add FSM State Diagram (FSM section)
+4. ✓ Save as PDF (File → Save As → PDF)
+5. ✓ Submit before Week 12 deadline
+
+═══════════════════════════════════════════════════════════════
+
+THAT'S IT! You have a clean Phase 1 design document.
+
+Your code files are also ready:
+- src/motor.c - Motor control driver ✓
+- src/ultrasonic.c - Ultrasonic sensor driver ✓
+- src/main.c - Needs FSM implementation (Phase 2)
+
+═══════════════════════════════════════════════════════════════

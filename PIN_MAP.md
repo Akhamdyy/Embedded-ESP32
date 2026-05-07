@@ -2,7 +2,7 @@
 
 Board: **ESP32-WROOM-32**
 Framework: **ESP-IDF**
-Last updated: 2026-04-16
+Last updated: 2026-04-29
 
 ---
 
@@ -35,14 +35,14 @@ GPIO number each port/pin resolves to.
 
 ### H-Bridge 1 — Left Side Motors (L298N)
 
-| GPIO | Port/Pin     | H-Bridge Pin | Function                  |
-|------|--------------|--------------|---------------------------|
-|  12  | PORTA PIN4   | ENA (PWM)    | Front Left — speed        |
-|  13  | PORTA PIN5   | ENB (PWM)    | Rear Left — speed         |
-|  16  | PORTB PIN0   | IN1          | Front Left — direction    |
-|  17  | PORTB PIN1   | IN2          | Front Left — direction    |
-|  18  | PORTB PIN2   | IN3          | Rear Left — direction     |
-|  19  | PORTB PIN3   | IN4          | Rear Left — direction     |
+| GPIO | Port/Pin     | H-Bridge Pin | Function                  | Notes                     |
+|------|--------------|--------------|---------------------------|---------------------------|
+|  12  | PORTA PIN4   | ENA (PWM)    | Front Left — speed        |                           |
+|  13  | PORTA PIN5   | ENB (PWM)    | Rear Left — speed         |                           |
+|  17  | PORTB PIN1   | IN1          | Front Left — direction    | Swapped (motor leads)     |
+|  16  | PORTB PIN0   | IN2          | Front Left — direction    | Swapped (motor leads)     |
+|  19  | PORTB PIN3   | IN3          | Rear Left — direction     | Swapped (motor leads)     |
+|  18  | PORTB PIN2   | IN4          | Rear Left — direction     | Swapped (motor leads)     |
 
 > GPIO 12 is a strapping pin — must be LOW during boot. Safe after boot.
 
@@ -63,12 +63,16 @@ GPIO number each port/pin resolves to.
 
 ---
 
-### Ultrasonic Sensor (HC-SR04)
+### Ultrasonic Sensors (HC-SR04 × 3)
 
-| GPIO | Port/Pin     | Sensor Pin | Notes                                        |
-|------|--------------|------------|----------------------------------------------|
-|  26  | PORTC PIN0   | TRIG       | Direct connection                            |
-|  27  | PORTC PIN1   | ECHO       | Via voltage divider: 1kΩ + 2kΩ (5V → 3.3V) |
+| GPIO | Port/Pin     | Sensor      | Sensor Pin | Notes                                        |
+|------|--------------|-------------|------------|----------------------------------------------|
+|  26  | PORTC PIN0   | Front       | TRIG       | Direct connection                            |
+|  27  | PORTC PIN1   | Front       | ECHO       | Via voltage divider: 1kΩ + 2kΩ (5V → 3.3V) |
+|  32  | PORTC PIN2   | Left        | TRIG       | Direct connection                            |
+|  33  | PORTC PIN3   | Left        | ECHO       | Via voltage divider: 1kΩ + 2kΩ (5V → 3.3V) |
+|  4   | PORTA PIN2   | Right       | TRIG       | Direct connection                            |
+|  5   | PORTA PIN3   | Right       | ECHO       | Via voltage divider: 1kΩ + 2kΩ (5V → 3.3V) |
 
 ---
 
@@ -79,10 +83,6 @@ These pins are not currently assigned to any peripheral.
 | GPIO | Port/Pin     | Direction    | Notes                                         |
 |------|--------------|--------------|-----------------------------------------------|
 |  0   | PORTA PIN0   | Input/Output | Strapping pin — internal pull-up, boot button |
-|  4   | PORTA PIN2   | Input/Output | General purpose                               |
-|  5   | PORTA PIN3   | Input/Output | Strapping pin — internal pull-up during boot  |
-|  32  | PORTC PIN2   | Input/Output | General purpose                               |
-|  33  | PORTC PIN3   | Input/Output | General purpose                               |
 |  34  | PORTC PIN4   | Input ONLY   | No output driver                              |
 |  35  | PORTC PIN5   | Input ONLY   | No output driver                              |
 |  36  | PORTC PIN6   | Input ONLY   | No output driver (labelled VP on board)       |
@@ -109,10 +109,11 @@ These pins are not currently assigned to any peripheral.
 |-------------------|------------------------------------|-------|
 | Motors (PWM)      | 12, 13, 14, 15                     | 4     |
 | Motors (Direction)| 16, 17, 18, 19, 21, 22, 23, 25    | 8     |
-| Ultrasonic        | 26, 27                             | 2     |
+| Ultrasonic (TRIG) | 26, 32, 4                          | 3     |
+| Ultrasonic (ECHO) | 27, 33, 5                          | 3     |
 | On-board LED      | 2                                  | 1     |
-| **Used total**    |                                    | **15**|
-| Available I/O     | 0, 4, 5, 32, 33                    | 5     |
+| **Used total**    |                                    | **19**|
+| Available I/O     | 0                                  | 1     |
 | Available input   | 34, 35, 36, 39                     | 4     |
-| **Available total**|                                   | **9** |
+| **Available total**|                                   | **5** |
 | Reserved          | 1, 3, 6–11, 20, 24, 28–31         | —     |
