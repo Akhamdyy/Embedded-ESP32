@@ -54,9 +54,9 @@ typedef struct
  *******************************************************************************/
 
 static const Ultrasonic_Config sensor_cfg[ULTRASONIC_COUNT] = {
-    /* FRONT */ { 26, 27, "FRONT" },
-    /* LEFT  */ { 32, 33, "LEFT"  },
-    /* RIGHT */ {  4,  5, "RIGHT" },
+    /* FRONT */ { 26, 34, "FRONT" },
+    /* LEFT  */ { 32, 35, "LEFT"  },
+    /* RIGHT */ {  4, 36, "RIGHT" },
 };
 
 static Ultrasonic_State sensor_state[ULTRASONIC_COUNT];
@@ -88,7 +88,7 @@ static void measurement_timer_cb(void *arg)
     /* Log previous result for this slot */
     uint16_t d = sensor_state[current].last_distance;
     if (d == ULTRASONIC_OUT_OF_RANGE)
-        printf("[%s] OUT OF RANGE\n", sensor_cfg[current].name);
+        printf("[%s] OOR\n", sensor_cfg[current].name);
     else
         printf("[%s] %u cm\n", sensor_cfg[current].name, d);
 
@@ -169,11 +169,13 @@ void Ultrasonic_initAll(uint32 measurement_interval_ms)
         gpio_set_level(sensor_cfg[i].trig_gpio, 0);
 
         /* --- Echo pin: input, interrupt on both edges --- */
+        /* GPIO 34/35/36 are input-only and have no internal pull resistors.
+           The voltage divider (2kΩ to GND) provides the passive pull-down. */
         gpio_config_t echo_cfg = {
             .pin_bit_mask = (1ULL << sensor_cfg[i].echo_gpio),
             .mode         = GPIO_MODE_INPUT,
             .pull_up_en   = GPIO_PULLUP_DISABLE,
-            .pull_down_en = GPIO_PULLDOWN_ENABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
             .intr_type    = GPIO_INTR_ANYEDGE,
         };
         gpio_config(&echo_cfg);

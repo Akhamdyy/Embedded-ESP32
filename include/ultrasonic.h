@@ -13,17 +13,17 @@
  *     VCC  -> 5V
  *     GND  -> GND
  *
- *   Front Sensor (GPIO 26/27):
+ *   Front Sensor:
  *     TRIG -> GPIO 26 (PORTC PIN0)  direct connection
- *     ECHO -> voltage divider     -> GPIO 27 (PORTC PIN1)
+ *     ECHO -> voltage divider     -> GPIO 34 (PORTC PIN4, input-only)
  *
- *   Left Sensor (GPIO 32/33):
+ *   Left Sensor:
  *     TRIG -> GPIO 32 (PORTC PIN2)  direct connection
- *     ECHO -> voltage divider     -> GPIO 33 (PORTC PIN3)
+ *     ECHO -> voltage divider     -> GPIO 35 (PORTC PIN5, input-only)
  *
- *   Right Sensor (GPIO 4/5):
+ *   Right Sensor:
  *     TRIG -> GPIO 4  (PORTA PIN2)  direct connection
- *     ECHO -> voltage divider     -> GPIO 5  (PORTA PIN3)
+ *     ECHO -> voltage divider     -> GPIO 36 (PORTC PIN6, input-only)
  *
  *   Echo voltage divider (5V -> 3.3V) for EACH sensor:
  *     HC-SR04 ECHO ── 1kΩ ── GPIOxx
