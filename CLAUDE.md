@@ -13,7 +13,7 @@ Main Components:
 - L298N dual H-bridge motor driver
 - HC-SR04 ultrasonic sensors (x3 — Front, Left, Right)
 - MPU-6050 IMU (I2C: SDA=GPIO27, SCL=GPIO33)
-- Bluetooth Classic SPP (raw HCI/VHCI — no Bluedroid)
+- Bluetooth Classic SPP (Bluedroid SPP — no Arduino libraries)
 
 # Architecture
 
@@ -32,7 +32,7 @@ Task-based FreeRTOS design with strict MCAL/HAL layering.
 | GPIO | `gpio.h` / `gpio.c` | `driver/gpio.h` — port/pin abstraction, ISR support |
 | PWM | `pwm.h` / `pwm.c` | `driver/ledc.h` — channel-based PWM |
 | Timer | `timer.h` / `timer.c` | `esp_timer.h` — one-shot and periodic timers |
-| BT Controller | `bt.h` / `bt.c` | `esp_bt.h` + `nvs_flash.h` — VHCI send/recv |
+| BT Controller | `bt.h` / `bt.c` | `esp_bt.h` + Bluedroid + `esp_spp_api.h` — SPP server |
 | Platform | `platform.h` | `esp_attr.h` — exposes `ISR_ATTR` macro |
 
 ## HAL Modules (completed)

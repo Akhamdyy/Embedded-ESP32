@@ -1,8 +1,7 @@
 #include <stdio.h>
+#include <stdint.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-// #include "driver/i2c.h"
-// #include "esp_log.h"
 #include "bluetooth.h"
 
 /* ── MPU-6050 / I2C pin assignments ── commented out for BT-only test ──── */
@@ -210,20 +209,45 @@ static void mpu6050_read_and_print(void)
 #endif /* mpu6050_read_and_print */
 
 /* ═══════════════════════════════════════════════════════════════════════════
- *  APP MAIN  —  Bluetooth connectivity test
+ *  APP MAIN  —  Bluetooth log test
  * ═════════════════════════════════════════════════════════════════════════ */
 void app_main(void)
 {
     printf("\n");
     printf("+----------------------------------------------------------+\n");
-    printf("|          Bluetooth Connectivity Test — WallRobot         |\n");
+    printf("|          Bluetooth Log Test — WallRobot                  |\n");
     printf("+----------------------------------------------------------+\n\n");
 
     if (bluetooth_init("WallRobot") == FALSE) {
         printf("[WARN] Bluetooth init failed — continuing without BT\n\n");
     }
 
+    boolean was_connected = FALSE;
+    uint32_t uptime_s     = 0;
+    char     buf[80];
+
     while (1) {
+        boolean now_connected = bluetooth_is_connected();
+
+        if (now_connected && !was_connected) {
+            bluetooth_send("=== WallRobot connected ===\r\n");
+            bluetooth_send("Uptime | Status\r\n");
+            bluetooth_send("-------+-------\r\n");
+            printf("[BT] Client connected — starting log\n");
+        }
+
+        if (!now_connected && was_connected) {
+            printf("[BT] Client disconnected\n");
+        }
+
+        was_connected = now_connected;
+
+        if (now_connected) {
+            snprintf(buf, sizeof(buf), "%5lu s | OK\r\n", (unsigned long)uptime_s);
+            bluetooth_send(buf);
+        }
+
+        uptime_s++;
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
