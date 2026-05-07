@@ -80,6 +80,22 @@ typedef enum
     PORT_INPUT, PORT_OUTPUT = 0xFF
 } GPIO_PortDirectionType;
 
+typedef enum
+{
+    GPIO_PULL_NONE,
+    GPIO_PULL_UP,
+    GPIO_PULL_DOWN
+} GPIO_PullType;
+
+typedef enum
+{
+    GPIO_INTR_RISING_EDGE,
+    GPIO_INTR_FALLING_EDGE,
+    GPIO_INTR_ANY_EDGE
+} GPIO_IntrTrigger;
+
+typedef void (*GPIO_IsrCallback)(void *arg);
+
 /*******************************************************************************
  *                              Functions Prototypes                           *
  *******************************************************************************/
@@ -130,5 +146,22 @@ void GPIO_writePort(uint8 port_num, uint8 value);
  * If the input port number is not correct, The function will return ZERO value.
  */
 uint8 GPIO_readPort(uint8 port_num);
+
+/*
+ * Description :
+ * Set the pull-up or pull-down resistor for a pin already configured as input.
+ * Note: GPIO34-39 (PORTC PIN4-7) are input-only and have no internal pull resistors;
+ * calls on those pins are silently ignored.
+ */
+void GPIO_setPullMode(uint8 port_num, uint8 pin_num, GPIO_PullType pull);
+
+/*
+ * Description :
+ * Enable edge-triggered interrupt on an input pin and register an ISR handler.
+ * The GPIO ISR service is installed automatically on the first call.
+ * If the input port number or pin number are not correct, The function will not handle the request.
+ */
+void GPIO_enableInterrupt(uint8 port_num, uint8 pin_num, GPIO_IntrTrigger trigger,
+                          GPIO_IsrCallback callback, void *arg);
 
 #endif /* GPIO_H_ */

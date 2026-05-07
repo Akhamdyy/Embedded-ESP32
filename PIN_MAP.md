@@ -2,7 +2,7 @@
 
 Board: **ESP32-WROOM-32**
 Framework: **ESP-IDF**
-Last updated: 2026-04-29
+Last updated: 2026-05-07
 
 ---
 
@@ -68,11 +68,28 @@ GPIO number each port/pin resolves to.
 | GPIO | Port/Pin     | Sensor      | Sensor Pin | Notes                                        |
 |------|--------------|-------------|------------|----------------------------------------------|
 |  26  | PORTC PIN0   | Front       | TRIG       | Direct connection                            |
-|  27  | PORTC PIN1   | Front       | ECHO       | Via voltage divider: 1kΩ + 2kΩ (5V → 3.3V) |
+|  34  | PORTC PIN4 ★ | Front       | ECHO       | Via voltage divider: 1kΩ + 2kΩ (5V → 3.3V) |
 |  32  | PORTC PIN2   | Left        | TRIG       | Direct connection                            |
-|  33  | PORTC PIN3   | Left        | ECHO       | Via voltage divider: 1kΩ + 2kΩ (5V → 3.3V) |
+|  35  | PORTC PIN5 ★ | Left        | ECHO       | Via voltage divider: 1kΩ + 2kΩ (5V → 3.3V) |
 |  4   | PORTA PIN2   | Right       | TRIG       | Direct connection                            |
-|  5   | PORTA PIN3   | Right       | ECHO       | Via voltage divider: 1kΩ + 2kΩ (5V → 3.3V) |
+|  36  | PORTC PIN6 ★ | Right       | ECHO       | Via voltage divider: 1kΩ + 2kΩ (5V → 3.3V) |
+
+★ = Input-only GPIO. ECHO lines are inputs only — no output needed. Internal pull-down unavailable; voltage divider provides passive pull-down.
+
+---
+
+### MPU-6050 (IMU — Gyroscope + Accelerometer)
+
+| GPIO | Port/Pin     | MPU-6050 Pin | Notes                              |
+|------|--------------|--------------|-------------------------------------|
+|  27  | PORTC PIN1   | SDA          | I2C data — I2C_NUM_0               |
+|  33  | PORTC PIN3   | SCL          | I2C clock — I2C_NUM_0              |
+|  —   | —            | VCC          | 3.3V                               |
+|  —   | —            | GND          | GND                                |
+|  —   | —            | AD0          | GND → I2C address 0x68             |
+|  —   | —            | INT          | Not connected                      |
+|  —   | —            | XDA          | Not connected                      |
+|  —   | —            | XCL          | Not connected                      |
 
 ---
 
@@ -83,9 +100,7 @@ These pins are not currently assigned to any peripheral.
 | GPIO | Port/Pin     | Direction    | Notes                                         |
 |------|--------------|--------------|-----------------------------------------------|
 |  0   | PORTA PIN0   | Input/Output | Strapping pin — internal pull-up, boot button |
-|  34  | PORTC PIN4   | Input ONLY   | No output driver                              |
-|  35  | PORTC PIN5   | Input ONLY   | No output driver                              |
-|  36  | PORTC PIN6   | Input ONLY   | No output driver (labelled VP on board)       |
+|  5   | PORTA PIN3   | Input/Output | Strapping pin — internal pull-up during boot  |
 |  39  | PORTC PIN7   | Input ONLY   | No output driver (labelled VN on board)       |
 
 ---
@@ -110,10 +125,11 @@ These pins are not currently assigned to any peripheral.
 | Motors (PWM)      | 12, 13, 14, 15                     | 4     |
 | Motors (Direction)| 16, 17, 18, 19, 21, 22, 23, 25    | 8     |
 | Ultrasonic (TRIG) | 26, 32, 4                          | 3     |
-| Ultrasonic (ECHO) | 27, 33, 5                          | 3     |
+| Ultrasonic (ECHO) | 34, 35, 36                         | 3     |
+| MPU-6050 (I2C)    | 27, 33                             | 2     |
 | On-board LED      | 2                                  | 1     |
-| **Used total**    |                                    | **19**|
-| Available I/O     | 0                                  | 1     |
-| Available input   | 34, 35, 36, 39                     | 4     |
-| **Available total**|                                   | **5** |
+| **Used total**    |                                    | **21**|
+| Available I/O     | 0, 5                               | 2     |
+| Available input   | 39                                 | 1     |
+| **Available total**|                                   | **3** |
 | Reserved          | 1, 3, 6–11, 20, 24, 28–31         | —     |

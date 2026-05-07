@@ -4,29 +4,46 @@
  *
  * File Name: ultrasonic.c
  *
- * Description: Source file for HC-SR04 ultrasonic distance sensor driver.
- *              Supports 3 independent sensors with staggered firing.
- *              Fully timer and interrupt driven - no blocking delays.
+ * Description: Source file for HC-SR04 ultrasonic distance sensor driver
+ *              (HAL layer). Supports 3 independent sensors with staggered
+ *              firing. Fully timer and interrupt driven - no blocking delays.
+ *
+ *              MCAL dependencies:
+ *                - gpio.h  : trigger output, echo input, echo ISR registration
+ *                - timer.h : one-shot trigger pulse timer, periodic measurement
+ *                            timer, ISR timestamp source
+ *
+ * Pin mapping (matched to project pin layout):
+ *
+ *   Sensor  | TRIG              | ECHO
+ *   --------|-------------------|-----------------------------
+ *   FRONT   | GPIO26 PORTC/PIN0 | GPIO34 PORTC/PIN4 (input-only)
+ *   LEFT    | GPIO32 PORTC/PIN2 | GPIO35 PORTC/PIN5 (input-only)
+ *   RIGHT   | GPIO4  PORTA/PIN2 | GPIO36 PORTC/PIN6 (input-only)
+ *
+ *   Echo pins GPIO34-36 are input-only (no internal pull resistors).
+ *   Use a 1kΩ/2kΩ voltage divider on each echo line (5V → 3.3V).
  *
  *******************************************************************************/
 
 #include "ultrasonic.h"
-#include "driver/gpio.h"
-#include "esp_timer.h"
-#include "esp_attr.h"
+#include "gpio.h"
+#include "timer.h"
+#include "platform.h"
 #include <stdio.h>
+#include <stdint.h>
 
 /*******************************************************************************
  *                         Private Definitions                                 *
  *******************************************************************************/
 
 /* Trigger pulse width per HC-SR04 datasheet */
-#define TRIG_PULSE_US       10
+#define TRIG_PULSE_US       10U
 
-/* Echo timeout: 400cm max range = ~23ms round trip, 30ms gives margin */
-#define ECHO_TIMEOUT_US     30000
+/* Echo timeout: 400 cm max range ≈ 23 ms round trip; 30 ms gives margin */
+#define ECHO_TIMEOUT_US     30000U
 
-/* Sound speed formula: duration(us) / 58 = distance(cm) */
+/* Distance formula: duration(µs) / 58 = distance(cm) */
 #define SOUND_DIVISOR       58
 
 /*******************************************************************************
@@ -35,46 +52,51 @@
 
 typedef struct
 {
-    int         trig_gpio;
-    int         echo_gpio;
+    uint8       trig_port;
+    uint8       trig_pin;
+    uint8       echo_port;
+    uint8       echo_pin;
     const char *name;
-} Ultrasonic_Config;
+} Ultrasonic_PinConfig;
 
 typedef struct
 {
-    volatile int64_t   echo_start_us;
-    volatile boolean   echo_active;
-    volatile uint16_t  last_distance;
-    volatile boolean   data_ready;
-    esp_timer_handle_t trig_pulse_timer;
+    volatile sint64  echo_start_us;
+    volatile boolean echo_active;
+    volatile uint16  last_distance;
+    volatile boolean data_ready;
+    Timer_HandleType trig_pulse_timer;
 } Ultrasonic_State;
 
 /*******************************************************************************
  *                         Private Data                                        *
  *******************************************************************************/
 
-static const Ultrasonic_Config sensor_cfg[ULTRASONIC_COUNT] = {
-    /* FRONT */ { 26, 27, "FRONT" },
-    /* LEFT  */ { 32, 33, "LEFT"  },
-    /* RIGHT */ {  4,  5, "RIGHT" },
+/*
+ * Pin assignments — must match project pin layout doc.
+ * ECHO pins are GPIO34/35/36 (PORTC PIN4/5/6, input-only, no internal pull).
+ */
+static const Ultrasonic_PinConfig sensor_cfg[ULTRASONIC_COUNT] = {
+    /* FRONT */ { PORTC_ID, PIN0_ID, PORTC_ID, PIN4_ID, "FRONT" },
+    /* LEFT  */ { PORTC_ID, PIN2_ID, PORTC_ID, PIN5_ID, "LEFT"  },
+    /* RIGHT */ { PORTA_ID, PIN2_ID, PORTC_ID, PIN6_ID, "RIGHT" },
 };
 
-static Ultrasonic_State sensor_state[ULTRASONIC_COUNT];
-
-static esp_timer_handle_t measurement_timer;   /* Periodic: triggers measurements */
+static Ultrasonic_State    sensor_state[ULTRASONIC_COUNT];
+static Timer_HandleType    measurement_timer;
 
 /*******************************************************************************
  *                         Private Functions                                   *
  *******************************************************************************/
 
 /*
- * One-shot timer callback — fires 10µs after trigger went HIGH.
- * Pulls TRIG LOW to complete the trigger pulse for the specified sensor.
+ * One-shot timer callback — fires 10 µs after TRIG went HIGH.
+ * Pulls TRIG LOW to complete the trigger pulse for this sensor.
  */
 static void trig_pulse_timer_cb(void *arg)
 {
-    uint32_t idx = (uint32_t)arg;
-    gpio_set_level(sensor_cfg[idx].trig_gpio, 0);
+    uint32_t idx = (uint32_t)(uintptr_t)arg;
+    GPIO_writePin(sensor_cfg[idx].trig_port, sensor_cfg[idx].trig_pin, LOGIC_LOW);
 }
 
 /*
@@ -83,50 +105,47 @@ static void trig_pulse_timer_cb(void *arg)
  */
 static void measurement_timer_cb(void *arg)
 {
+    (void)arg;
     static uint32_t current = 0;
 
     /* Log previous result for this slot */
-    uint16_t d = sensor_state[current].last_distance;
+    uint16 d = sensor_state[current].last_distance;
     if (d == ULTRASONIC_OUT_OF_RANGE)
         printf("[%s] OUT OF RANGE\n", sensor_cfg[current].name);
     else
-        printf("[%s] %u cm\n", sensor_cfg[current].name, d);
+        printf("[%s] %u cm\n", sensor_cfg[current].name, (unsigned int)d);
 
-    /* Start trigger pulse: pull HIGH then start one-shot timer to pull LOW */
-    gpio_set_level(sensor_cfg[current].trig_gpio, 1);
-    esp_timer_start_once(sensor_state[current].trig_pulse_timer, TRIG_PULSE_US);
+    /* Start trigger pulse: HIGH → one-shot timer will pull it LOW after 10 µs */
+    GPIO_writePin(sensor_cfg[current].trig_port, sensor_cfg[current].trig_pin, LOGIC_HIGH);
+    Timer_startOnce(sensor_state[current].trig_pulse_timer, TRIG_PULSE_US);
 
-    /* Advance to next sensor */
-    current = (current + 1) % ULTRASONIC_COUNT;
+    current = (current + 1U) % (uint32_t)ULTRASONIC_COUNT;
 }
 
 /*
- * GPIO ISR — called on both rising and falling edges of any Echo pin.
- * The sensor index is passed as arg to identify which sensor fired.
- * Rising edge : record start time.
- * Falling edge: record end time, compute and store distance.
+ * GPIO ISR — called on both edges of each Echo pin.
+ * Rising  : record start timestamp.
+ * Falling : compute duration, convert to cm, store result.
  */
-static void IRAM_ATTR echo_isr_handler(void *arg)
+static ISR_ATTR void echo_isr_handler(void *arg)
 {
-    uint32_t idx = (uint32_t)arg;
+    uint32_t idx = (uint32_t)(uintptr_t)arg;
     Ultrasonic_State *s = &sensor_state[idx];
 
-    if (gpio_get_level(sensor_cfg[idx].echo_gpio) == 1)
+    if (GPIO_readPin(sensor_cfg[idx].echo_port, sensor_cfg[idx].echo_pin) == LOGIC_HIGH)
     {
-        /* Rising edge: echo pulse started */
-        s->echo_start_us = esp_timer_get_time();
+        s->echo_start_us = Timer_getTimeUs();
         s->echo_active   = TRUE;
     }
     else
     {
-        /* Falling edge: echo pulse ended */
         if (s->echo_active)
         {
-            int64_t duration_us = esp_timer_get_time() - s->echo_start_us;
+            sint64 duration_us = Timer_getTimeUs() - s->echo_start_us;
 
-            if (duration_us > 0 && duration_us < ECHO_TIMEOUT_US)
+            if (duration_us > 0 && duration_us < (sint64)ECHO_TIMEOUT_US)
             {
-                s->last_distance = (uint16_t)(duration_us / SOUND_DIVISOR);
+                s->last_distance = (uint16)(duration_us / SOUND_DIVISOR);
             }
             else
             {
@@ -149,58 +168,37 @@ static void IRAM_ATTR echo_isr_handler(void *arg)
  */
 void Ultrasonic_initAll(uint32 measurement_interval_ms)
 {
-    for (uint32_t i = 0; i < ULTRASONIC_COUNT; i++)
+    uint32_t i;
+    char timer_name[20];
+
+    for (i = 0; i < (uint32_t)ULTRASONIC_COUNT; i++)
     {
-        /* Initialize state */
-        sensor_state[i].echo_start_us  = 0;
-        sensor_state[i].echo_active    = FALSE;
-        sensor_state[i].last_distance  = ULTRASONIC_OUT_OF_RANGE;
-        sensor_state[i].data_ready     = FALSE;
+        /* Reset state */
+        sensor_state[i].echo_start_us = 0;
+        sensor_state[i].echo_active   = FALSE;
+        sensor_state[i].last_distance = ULTRASONIC_OUT_OF_RANGE;
+        sensor_state[i].data_ready    = FALSE;
 
-        /* --- Trigger pin: output, start LOW --- */
-        gpio_config_t trig_cfg = {
-            .pin_bit_mask = (1ULL << sensor_cfg[i].trig_gpio),
-            .mode         = GPIO_MODE_OUTPUT,
-            .pull_up_en   = GPIO_PULLUP_DISABLE,
-            .pull_down_en = GPIO_PULLDOWN_DISABLE,
-            .intr_type    = GPIO_INTR_DISABLE,
-        };
-        gpio_config(&trig_cfg);
-        gpio_set_level(sensor_cfg[i].trig_gpio, 0);
+        /* TRIG pin: output, start LOW */
+        GPIO_setupPinDirection(sensor_cfg[i].trig_port, sensor_cfg[i].trig_pin, PIN_OUTPUT);
+        GPIO_writePin(sensor_cfg[i].trig_port, sensor_cfg[i].trig_pin, LOGIC_LOW);
 
-        /* --- Echo pin: input, interrupt on both edges --- */
-        gpio_config_t echo_cfg = {
-            .pin_bit_mask = (1ULL << sensor_cfg[i].echo_gpio),
-            .mode         = GPIO_MODE_INPUT,
-            .pull_up_en   = GPIO_PULLUP_DISABLE,
-            .pull_down_en = GPIO_PULLDOWN_ENABLE,
-            .intr_type    = GPIO_INTR_ANYEDGE,
-        };
-        gpio_config(&echo_cfg);
+        /* ECHO pin: input, both-edge ISR
+         * GPIO34-36 have no internal pull resistors; external voltage divider
+         * holds the line LOW when idle — no pull configuration needed. */
+        GPIO_setupPinDirection(sensor_cfg[i].echo_port, sensor_cfg[i].echo_pin, PIN_INPUT);
+        GPIO_enableInterrupt(sensor_cfg[i].echo_port, sensor_cfg[i].echo_pin,
+                             GPIO_INTR_ANY_EDGE, echo_isr_handler, (void *)(uintptr_t)i);
 
-        gpio_install_isr_service(0);
-        gpio_isr_handler_add(sensor_cfg[i].echo_gpio, echo_isr_handler, (void *)i);
-
-        /* --- One-shot timer: ends the 10µs trigger pulse for this sensor --- */
-        char timer_name[20];
+        /* One-shot timer: ends the 10 µs trigger pulse for this sensor */
         snprintf(timer_name, sizeof(timer_name), "us_trig_%s", sensor_cfg[i].name);
-        const esp_timer_create_args_t trig_timer_args = {
-            .callback = trig_pulse_timer_cb,
-            .arg      = (void *)i,
-            .name     = timer_name,
-        };
-        esp_timer_create(&trig_timer_args, &sensor_state[i].trig_pulse_timer);
+        Timer_createOneShot(timer_name, trig_pulse_timer_cb,
+                            (void *)(uintptr_t)i, &sensor_state[i].trig_pulse_timer);
     }
 
-    /* --- Periodic timer: triggers measurements in round-robin fashion --- */
-    const esp_timer_create_args_t meas_timer_args = {
-        .callback = measurement_timer_cb,
-        .arg      = NULL,
-        .name     = "ultrasonic_meas",
-    };
-    esp_timer_create(&meas_timer_args, &measurement_timer);
-    esp_timer_start_periodic(measurement_timer,
-                             (uint64_t)measurement_interval_ms * 1000ULL);
+    /* Periodic timer: triggers measurements in round-robin */
+    Timer_createPeriodic("ultrasonic_meas", measurement_timer_cb, NULL, &measurement_timer);
+    Timer_startPeriodic(measurement_timer, (uint32)(measurement_interval_ms * 1000UL));
 }
 
 /*
@@ -210,20 +208,23 @@ void Ultrasonic_initAll(uint32 measurement_interval_ms)
 uint16 Ultrasonic_getDistance(Ultrasonic_SensorID sensor)
 {
     if (sensor >= ULTRASONIC_COUNT)
+    {
         return ULTRASONIC_OUT_OF_RANGE;
-
+    }
     return sensor_state[sensor].last_distance;
 }
 
 /*
  * Description :
- * Return TRUE if a new measurement has completed for the specified sensor.
+ * Return TRUE if a new measurement has completed since the last call for
+ * this sensor. Clears the flag on read.
  */
 boolean Ultrasonic_isDataReady(Ultrasonic_SensorID sensor)
 {
     if (sensor >= ULTRASONIC_COUNT)
+    {
         return FALSE;
-
+    }
     if (sensor_state[sensor].data_ready)
     {
         sensor_state[sensor].data_ready = FALSE;
