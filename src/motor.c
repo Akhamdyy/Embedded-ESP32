@@ -164,7 +164,7 @@ void Motor_setDirection(Motor_ID motor, Motor_Direction direction)
 void Motor_drive(Motor_ID motor, Motor_Direction direction, uint8 speed)
 {
     Motor_applyDirection(motor, direction);
-    PWM_setDuty(motor_cfg[motor].pwm_channel, speed);
+    Pwm_setDuty(motor_cfg[motor].pwm_channel, speed);
 }
 
 /*
@@ -173,7 +173,7 @@ void Motor_drive(Motor_ID motor, Motor_Direction direction, uint8 speed)
  */
 void Motor_stop(Motor_ID motor)
 {
-    PWM_setDuty(motor_cfg[motor].pwm_channel, MOTOR_MIN_SPEED);
+    Pwm_setDuty(motor_cfg[motor].pwm_channel, MOTOR_MIN_SPEED);
     Motor_applyDirection(motor, MOTOR_STOP);
 }
 

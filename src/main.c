@@ -1,94 +1,48 @@
 /******************************************************************************
  *
- * Application: Robot Car — Basic Obstacle Test (no MPU6050)
+ * Application: MPU-6050 Turn Test
  *
  * File Name: main.c
  *
- * Description: Simple obstacle avoidance using front ultrasonic sensor only.
- *              No MPU6050 — turns are time-based.
+ * Description: Tests MPU6050_turn() — gyro-guided 90-degree pivot turns.
  *
- *              Behaviour:
- *                1. Drive forward
- *                2. Obstacle detected → reverse for REVERSE_MS
- *                3. Turn right for TURN_MS
- *                4. Resume forward
+ *              Sequence (repeated forever):
+ *                1. Calibrate (keep robot still)
+ *                2. 3-second countdown — place robot on floor
+ *                3. Turn RIGHT 90°  → stop 1 s
+ *                4. Turn LEFT  90°  → stop 1 s
  *
  *******************************************************************************/
 
 #include <stdio.h>
-#include <stdint.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "motor.h"
-#include "ultrasonic.h"
+#include "mpu6050.h"
 
-/*******************************************************************************
- *                         Tuning Parameters                                   *
- *******************************************************************************/
-
-#define OBSTACLE_CM         25u     /* Front sensor: trigger avoidance (cm)    */
-
-#define DRIVE_SPEED         155u    /* Forward speed (0-255)                   */
-#define REVERSE_SPEED       140u    /* Reverse speed                           */
-#define TURN_SPEED          140u    /* Speed during right turn                 */
-
-#define SENSOR_INTERVAL_MS  50u     /* Ultrasonic fire interval (ms)           */
-#define SENSOR_SETTLE_MS    500u    /* Wait for first readings after boot      */
-#define REVERSE_MS          600u    /* How long to reverse (ms)                */
-#define TURN_MS             550u    /* How long to turn right (ms)             */
-#define LOOP_DELAY_MS       50u     /* Main loop period (ms)                   */
-
-/*******************************************************************************
- *                         Application Entry Point                             *
- *******************************************************************************/
+#define TURN_SPEED      90u     /* 0-255 — lower = more accurate, slower */
 
 void app_main(void)
 {
-    uint16_t front;
-
-    /* --- Init --- */
     Motor_init();
     Motor_stopAll();
 
-    Ultrasonic_initAll(SENSOR_INTERVAL_MS);
+    MPU6050_init();
+    MPU6050_calibrate();
 
-    /* Wait for first sensor readings */
-    vTaskDelay(pdMS_TO_TICKS(SENSOR_SETTLE_MS));
+    printf("\nPlacing robot on floor — turning in 3 s...\n");
+    vTaskDelay(pdMS_TO_TICKS(3000));
 
-    printf("Basic obstacle test started.\n\n");
-
-    /* --- Main Loop --- */
     while (1)
     {
-        front = Ultrasonic_getDistance(ULTRASONIC_FRONT);
+        printf("Turning RIGHT 90 degrees\n");
+        MPU6050_turn(MPU6050_TURN_RIGHT, TURN_SPEED);
+        printf("Done\n");
+        vTaskDelay(pdMS_TO_TICKS(1000));
 
-        /* Treat out-of-range as clear (no obstacle) */
-        if (front == ULTRASONIC_OUT_OF_RANGE)
-            front = 400u;
-
-        if (front <= OBSTACLE_CM)
-        {
-            /* --- Obstacle detected --- */
-            printf("Obstacle %u cm — reversing then turning right\n", front);
-
-            /* Step 1: reverse */
-            Car_moveBackward(REVERSE_SPEED, REVERSE_SPEED);
-            vTaskDelay(pdMS_TO_TICKS(REVERSE_MS));
-
-            /* Step 2: turn right in place */
-            Car_turnRight(DRIVE_SPEED, 0);
-            vTaskDelay(pdMS_TO_TICKS(TURN_MS));
-
-            /* Step 3: stop briefly before resuming */
-            Motor_brakeAll();
-            vTaskDelay(pdMS_TO_TICKS(200));
-        }
-        else
-        {
-            /* --- Clear path — drive forward --- */
-            Car_moveForward(DRIVE_SPEED, DRIVE_SPEED);
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(LOOP_DELAY_MS));
+        printf("Turning LEFT 90 degrees\n");
+        MPU6050_turn(MPU6050_TURN_LEFT, TURN_SPEED);
+        printf("Done\n");
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
