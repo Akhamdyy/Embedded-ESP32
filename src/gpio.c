@@ -12,11 +12,10 @@
 
 #include "gpio.h"
 #include "platform.h"           /* IRAM_ATTR / ISR_ATTR                     */
+#include "intr.h"               /* Intr_install — manual CPU intr allocator */
 
 #include "soc/gpio_reg.h"       /* GPIO_*_REG addresses                     */
 #include "soc/io_mux_reg.h"     /* DR_REG_IO_MUX_BASE                       */
-#include "soc/soc.h"            /* ETS_GPIO_INTR_SOURCE                     */
-#include "esp_intr_alloc.h"     /* esp_intr_alloc, intr_handle_t            */
 
 /*******************************************************************************
  *                              Register Helper                                *
@@ -42,7 +41,7 @@
 #define GPIO_PIN_INT_ENA_SHIFT      13
 #define GPIO_PIN_INT_ENA_MASK       (0x1Fu << GPIO_PIN_INT_ENA_SHIFT)
 /* ESP32 GPIO_LL: APP_CPU=BIT(0), PRO_CPU=BIT(2) within the 5-bit int_ena field.
- * The app and esp_intr_alloc both run on PRO_CPU, so bit 2 (= bit 15 of reg) is required. */
+ * Our app and the intr driver both run on PRO_CPU, so bit 2 (= bit 15 of reg) is required. */
 #define GPIO_PIN_INT_ENA_PRO_CPU    (0x4u  << GPIO_PIN_INT_ENA_SHIFT)
 
 #define GPIO_INT_TYPE_DISABLE       0u
@@ -552,11 +551,7 @@ void GPIO_enableInterrupt(uint8 port_num, uint8 pin_num, GPIO_IntrTrigger trigge
     /* Allocate the shared GPIO peripheral interrupt the first time only. */
     if (!gpio_intr_installed)
     {
-        (void)esp_intr_alloc(ETS_GPIO_INTR_SOURCE,
-                             0,                  /* default level (1)        */
-                             GPIO_sharedIsr,
-                             NULL_PTR,
-                             NULL_PTR);
+        Intr_install(INTR_SOURCE_GPIO, GPIO_sharedIsr, NULL_PTR);
         gpio_intr_installed = TRUE;
     }
 }
