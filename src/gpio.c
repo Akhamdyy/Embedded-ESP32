@@ -161,7 +161,7 @@ static boolean          gpio_intr_installed = FALSE;
  * Shared GPIO ISR — placed in IRAM so it can run while flash cache is
  * disabled (e.g. during SPI flash writes).
  */
-static IRAM_ATTR void GPIO_sharedIsr(void *unused)
+static ISR_ATTR void GPIO_sharedIsr(void *unused)
 {
     (void)unused;
 
@@ -369,7 +369,7 @@ void GPIO_writePin(uint8 port_num, uint8 pin_num, uint8 value)
  * Read and return the value for the required pin, it should be Logic High or Logic Low.
  * If the input port number or pin number are not correct, The function will return Logic Low.
  */
-IRAM_ATTR uint8 GPIO_readPin(uint8 port_num, uint8 pin_num)
+ISR_ATTR uint8 GPIO_readPin(uint8 port_num, uint8 pin_num)
 {
     if ((pin_num >= NUM_OF_PINS_PER_PORT) || (port_num >= NUM_OF_PORTS))
     {

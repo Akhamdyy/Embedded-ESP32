@@ -1,34 +1,20 @@
-  #include "pwm.h"
+#include "ultrasonic.h"
   #include "freertos/FreeRTOS.h"
   #include "freertos/task.h"
+  #include <stdio.h>
 
   void app_main(void)
   {
-      Pwm_TimerConfig tcfg = {
-          .timer     = PWM_TIMER_0,
-          .freq_hz   = 1000u,
-          .duty_bits = 8u,
-      };
-      Pwm_timerInit(&tcfg);
-
-      Pwm_ChannelConfig ccfg = {
-          .channel  = PWM_CHANNEL_0,
-          .timer    = PWM_TIMER_0,
-          .gpio_num = 2,            /* on-board LED */
-      };
-      Pwm_channelInit(&ccfg);
+      /* round-robin every 500 ms across the 3 sensors */
+      Ultrasonic_initAll(500u);
 
       while (1)
       {
-          for (int d = 0; d <= 255; d += 5)
-          {
-              Pwm_setDuty(PWM_CHANNEL_0, (uint8)d);
-              vTaskDelay(pdMS_TO_TICKS(10));
-          }
-          for (int d = 255; d >= 0; d -= 5)
-          {
-              Pwm_setDuty(PWM_CHANNEL_0, (uint8)d);
-              vTaskDelay(pdMS_TO_TICKS(10));
-          }
+          uint16 f = Ultrasonic_getDistance(ULTRASONIC_FRONT);
+          uint16 l = Ultrasonic_getDistance(ULTRASONIC_LEFT);
+          uint16 r = Ultrasonic_getDistance(ULTRASONIC_RIGHT);
+          printf("F=%u  L=%u  R=%u  cm\n",
+                 (unsigned)f, (unsigned)l, (unsigned)r);
+          vTaskDelay(pdMS_TO_TICKS(500));
       }
   }
