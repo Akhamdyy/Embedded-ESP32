@@ -258,8 +258,9 @@ void Timer_startPeriodic(Timer_HandleType handle, uint32 period_us)
  */
 ISR_ATTR sint64 Timer_getTimeUs(void)
 {
-    /* Latch the current 64-bit counter value into the LO/HI shadow regs. */
-    REG32(TIMG_T0UPDATE_REG) = 1u;
+    /* Latch the current 64-bit counter value into the LO/HI shadow regs.
+     * Bit 31 (TIMG_T0_UPDATE) is the trigger field; writing bit 0 does nothing. */
+    REG32(TIMG_T0UPDATE_REG) = (1u << 31);
     uint32 lo = REG32(TIMG_T0LO_REG);
     uint32 hi = REG32(TIMG_T0HI_REG);
     return (sint64)(((uint64)hi << 32) | (uint64)lo);

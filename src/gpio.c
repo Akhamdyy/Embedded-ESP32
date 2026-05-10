@@ -41,7 +41,9 @@
 #define GPIO_PIN_INT_TYPE_MASK      (0x7u  << GPIO_PIN_INT_TYPE_SHIFT)
 #define GPIO_PIN_INT_ENA_SHIFT      13
 #define GPIO_PIN_INT_ENA_MASK       (0x1Fu << GPIO_PIN_INT_ENA_SHIFT)
-#define GPIO_PIN_INT_ENA_PRO_CPU    (0x1u  << GPIO_PIN_INT_ENA_SHIFT)
+/* ESP32 GPIO_LL: APP_CPU=BIT(0), PRO_CPU=BIT(2) within the 5-bit int_ena field.
+ * The app and esp_intr_alloc both run on PRO_CPU, so bit 2 (= bit 15 of reg) is required. */
+#define GPIO_PIN_INT_ENA_PRO_CPU    (0x4u  << GPIO_PIN_INT_ENA_SHIFT)
 
 #define GPIO_INT_TYPE_DISABLE       0u
 #define GPIO_INT_TYPE_POSEDGE       1u

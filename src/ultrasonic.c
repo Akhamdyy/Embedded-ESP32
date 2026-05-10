@@ -171,14 +171,23 @@ void Ultrasonic_initAll(uint32 measurement_interval_ms)
     uint32_t i;
     char timer_name[20];
 
+    /* Create all one-shot timers first — this initialises TIMG1 via prv_timgInit()
+     * so Timer_getTimeUs() is ready before any echo ISR can fire. */
     for (i = 0; i < (uint32_t)ULTRASONIC_COUNT; i++)
     {
-        /* Reset state */
         sensor_state[i].echo_start_us = 0;
         sensor_state[i].echo_active   = FALSE;
         sensor_state[i].last_distance = ULTRASONIC_OUT_OF_RANGE;
         sensor_state[i].data_ready    = FALSE;
 
+        snprintf(timer_name, sizeof(timer_name), "us_trig_%s", sensor_cfg[i].name);
+        Timer_createOneShot(timer_name, trig_pulse_timer_cb,
+                            (void *)(uintptr_t)i, &sensor_state[i].trig_pulse_timer);
+    }
+
+    /* TIMG1 is now live. Configure GPIO and register echo ISRs. */
+    for (i = 0; i < (uint32_t)ULTRASONIC_COUNT; i++)
+    {
         /* TRIG pin: output, start LOW */
         GPIO_setupPinDirection(sensor_cfg[i].trig_port, sensor_cfg[i].trig_pin, PIN_OUTPUT);
         GPIO_writePin(sensor_cfg[i].trig_port, sensor_cfg[i].trig_pin, LOGIC_LOW);
@@ -189,11 +198,6 @@ void Ultrasonic_initAll(uint32 measurement_interval_ms)
         GPIO_setupPinDirection(sensor_cfg[i].echo_port, sensor_cfg[i].echo_pin, PIN_INPUT);
         GPIO_enableInterrupt(sensor_cfg[i].echo_port, sensor_cfg[i].echo_pin,
                              GPIO_INTR_ANY_EDGE, echo_isr_handler, (void *)(uintptr_t)i);
-
-        /* One-shot timer: ends the 10 µs trigger pulse for this sensor */
-        snprintf(timer_name, sizeof(timer_name), "us_trig_%s", sensor_cfg[i].name);
-        Timer_createOneShot(timer_name, trig_pulse_timer_cb,
-                            (void *)(uintptr_t)i, &sensor_state[i].trig_pulse_timer);
     }
 
     /* Periodic timer: triggers measurements in round-robin */

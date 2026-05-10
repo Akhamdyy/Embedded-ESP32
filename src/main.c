@@ -15,6 +15,6 @@
           uint16 r = Ultrasonic_getDistance(ULTRASONIC_RIGHT);
           printf("F=%u  L=%u  R=%u  cm\n",
                  (unsigned)f, (unsigned)l, (unsigned)r);
-          vTaskDelay(pdMS_TO_TICKS(500));
+        //   vTaskDelay(pdMS_TO_TICKS(500));
       }
   }
