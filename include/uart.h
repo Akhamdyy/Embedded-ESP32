@@ -42,7 +42,7 @@ typedef enum
  * Initialise UART2 at the requested baud rate.
  * Clocks and resets the UART2 peripheral, routes TX and RX through the GPIO
  * matrix (IO_MUX MCU_SEL = 2), resets both FIFOs, programs the baud
- * divisor, sets 8N1 framing, and registers the RX ISR via esp_intr_alloc.
+ * divisor, sets 8N1 framing, and registers the RX ISR via Intr_install().
  * Returns UART_OK on success or UART_FAIL if either GPIO is unsupported.
  */
 UART_StatusType UART_init(uint32 baud, uint8 tx_gpio, uint8 rx_gpio);

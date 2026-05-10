@@ -26,6 +26,7 @@
  * interrupts.
  ******************************************************************************/
 #define INTR_SOURCE_GPIO        22u   /* ETS_GPIO_INTR_SOURCE              */
+#define INTR_SOURCE_UART2       18u   /* ETS_UART2_INTR_SOURCE             */
 
 /*******************************************************************************
  *                               Types Declaration                             *

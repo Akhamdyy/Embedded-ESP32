@@ -137,7 +137,7 @@ static void prv_spp_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param
         if (param->init.status == ESP_SPP_SUCCESS)
         {
             printf("[BT] SPP init OK — starting server\n");
-            esp_spp_start_srv(ESP_SPP_SEC_NONE, ESP_SPP_ROLE_SLAVE, 0, SPP_SERVER_NAME);
+            esp_spp_start_srv(ESP_SPP_SEC_AUTHENTICATE, ESP_SPP_ROLE_SLAVE, 0, SPP_SERVER_NAME);
         }
         else
         {
@@ -172,8 +172,16 @@ static void prv_spp_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param
     case ESP_SPP_CLOSE_EVT:
         s_spp_handle = 0u;
         s_connected  = FALSE;
-        printf("[BT] Disconnected\n");
+        printf("[BT] Disconnected — restarting server\n");
         if (s_on_disconnect != NULL) s_on_disconnect();
+        /* Stop the old slot first so the SCN doesn't keep incrementing;
+           the resulting UNINIT_EVT is ignored (server name won't match). */
+        esp_spp_stop_srv();
+        break;
+
+    case ESP_SPP_UNINIT_EVT:
+        /* Fired after esp_spp_stop_srv() — re-register with the same SCN slot. */
+        esp_spp_start_srv(ESP_SPP_SEC_AUTHENTICATE, ESP_SPP_ROLE_SLAVE, 0, SPP_SERVER_NAME);
         break;
 
     case ESP_SPP_DATA_IND_EVT:

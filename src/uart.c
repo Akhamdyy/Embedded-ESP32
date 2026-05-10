@@ -19,9 +19,8 @@
 
 #include "soc/soc.h"            /* DR_REG_GPIO_BASE, DR_REG_IO_MUX_BASE, etc. */
 #include "soc/dport_reg.h"      /* DPORT_PERIP_CLK_EN_REG, DPORT_PERIP_RST_EN_REG */
-#include "soc/interrupts.h"     /* ETS_UART2_INTR_SOURCE                           */
 #include "soc/gpio_sig_map.h"   /* U2TXD_OUT_IDX, U2RXD_IN_IDX                    */
-#include "esp_intr_alloc.h"     /* esp_intr_alloc, ESP_INTR_FLAG_IRAM              */
+#include "intr.h"               /* Intr_install, INTR_SOURCE_UART2                 */
 
 #include "freertos/FreeRTOS.h"
 
@@ -369,14 +368,10 @@ UART_StatusType UART_init(uint32 baud, uint8 tx_gpio, uint8 rx_gpio)
                         | UART_INT_RXFIFO_OVF;
 
     /*--------------------------------------------------------------------------
-     * Step 9: Register the ISR with the Xtensa interrupt controller.
-     *         ESP_INTR_FLAG_IRAM tells the allocator the handler is in IRAM.
+     * Step 9: Route UART2 interrupt source through the DPORT matrix to a
+     *         free CPU interrupt line and install the ISR handler.
      *------------------------------------------------------------------------*/
-    esp_intr_alloc(ETS_UART2_INTR_SOURCE,
-                   ESP_INTR_FLAG_IRAM,
-                   uart2_isr,
-                   NULL,
-                   NULL);
+    Intr_install(INTR_SOURCE_UART2, uart2_isr, NULL);
 
     printf("[UART] UART2 ready: TX=GPIO%u RX=GPIO%u %u baud 8N1\n",
            (unsigned)tx_gpio, (unsigned)rx_gpio, (unsigned)baud);
