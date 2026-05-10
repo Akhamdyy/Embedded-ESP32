@@ -30,6 +30,10 @@
 
 #include "intr.h"
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"      /* xPortGetCoreID for Intr_diagnose          */
+#include <stdio.h>              /* printf for Intr_diagnose                  */
+
 /*******************************************************************************
  *                FreeRTOS Xtensa Port — Forward Declarations                  *
  *******************************************************************************/
@@ -77,6 +81,16 @@ extern void         xt_ints_on(unsigned int mask);
 static const uint8 cpu_int_pool[] = { 12u, 13u, 17u, 18u };
 static uint8       pool_next      = 0u;
 
+/* Bookkeeping for Intr_diagnose: which source got which CPU int. */
+typedef struct
+{
+    uint32 source;
+    uint8  cpu_int;
+} Intr_InstalledEntry;
+
+static Intr_InstalledEntry installed[sizeof(cpu_int_pool) / sizeof(cpu_int_pool[0])];
+static uint8               installed_count = 0u;
+
 /*******************************************************************************
  *                         Function Definitions                                *
  *******************************************************************************/
@@ -107,4 +121,107 @@ void Intr_install(uint32 intr_source, Intr_HandlerType handler, void *arg)
 
     /* 3. Unmask the CPU interrupt line (RMW of INTENABLE special reg). */
     xt_ints_on(1u << cpu_int);
+
+    /* 4. Record for Intr_diagnose. */
+    installed[installed_count].source  = intr_source;
+    installed[installed_count].cpu_int = cpu_int;
+    installed_count++;
+}
+
+/*******************************************************************************
+ *                          Diagnostic / Validation                            *
+ *******************************************************************************/
+
+/* Sources allocated dynamically by the BT controller's internal esp_intr_alloc.
+ * Range 3..8 covers ETS_BT_MAC, ETS_BT_BB, ETS_BT_BB_NMI, ETS_RWBT, ETS_RWBLE,
+ * ETS_RWBT_NMI on ESP32. Used by Intr_diagnose to scan for CPU-int collisions
+ * with our pool. */
+#define BT_SOURCE_FIRST     3u
+#define BT_SOURCE_LAST      8u
+
+/* Read Xtensa INTENABLE special register (per-core). */
+static inline uint32 read_intenable(void)
+{
+    uint32 v;
+    __asm__ __volatile__ ("rsr.intenable %0" : "=r"(v));
+    return v;
+}
+
+void Intr_diagnose(void)
+{
+    BaseType_t core = xPortGetCoreID();
+    uint32     ie   = read_intenable();
+    uint8      i;
+    uint8      failures = 0u;
+
+    printf("\n=== Intr_diagnose ===\n");
+    printf("core_id        : %d (expect 0 = PRO_CPU)\n", (int)core);
+    if (core != 0)
+    {
+        printf("  !! FAIL — Intr_diagnose must run on PRO_CPU "
+               "(INTENABLE is per-core)\n");
+        failures++;
+    }
+
+    printf("INTENABLE      : 0x%08lx\n", (unsigned long)ie);
+    printf("pool_next      : %u / %u\n",
+           (unsigned)pool_next,
+           (unsigned)(sizeof(cpu_int_pool) / sizeof(cpu_int_pool[0])));
+    printf("installed_count: %u\n", (unsigned)installed_count);
+
+    /* Per-installation checks: DPORT map read-back + INTENABLE bit set. */
+    for (i = 0u; i < installed_count; i++)
+    {
+        uint32 source  = installed[i].source;
+        uint8  cpu_int = installed[i].cpu_int;
+        uint32 mapreg  = REG32(INTR_MAP_REG(source)) & 0x1Fu;
+        boolean ena    = (ie & (1u << cpu_int)) != 0u;
+
+        printf("  [%u] src=%lu cpu_int=%u map_reg=%lu enabled=%s",
+               (unsigned)i, (unsigned long)source, (unsigned)cpu_int,
+               (unsigned long)mapreg, ena ? "Y" : "N");
+
+        if (mapreg != cpu_int)
+        {
+            printf("  !! FAIL (map mismatch)");
+            failures++;
+        }
+        if (!ena)
+        {
+            printf("  !! FAIL (INTENABLE bit clear)");
+            failures++;
+        }
+        printf("\n");
+    }
+
+    /* BT-controller collision scan. If bt.c is initialised before
+     * Intr_diagnose runs, the BT source map registers hold non-zero CPU int
+     * numbers assigned by ESP-IDF's esp_intr_alloc. Any overlap with our
+     * pool means two ISRs sharing one CPU int — silent corruption. */
+    printf("BT collision scan (sources %u..%u):\n",
+           (unsigned)BT_SOURCE_FIRST, (unsigned)BT_SOURCE_LAST);
+    for (i = BT_SOURCE_FIRST; i <= BT_SOURCE_LAST; i++)
+    {
+        uint32 bt_cpu_int = REG32(INTR_MAP_REG(i)) & 0x1Fu;
+        boolean collision = FALSE;
+        uint8 j;
+        for (j = 0u; j < installed_count; j++)
+        {
+            if (installed[j].cpu_int == (uint8)bt_cpu_int)
+            {
+                collision = TRUE;
+                break;
+            }
+        }
+        if (bt_cpu_int != 0u)
+        {
+            printf("  bt_src=%u -> cpu_int=%lu%s\n",
+                   (unsigned)i, (unsigned long)bt_cpu_int,
+                   collision ? "  !! FAIL (overlaps our pool)" : "");
+            if (collision) failures++;
+        }
+    }
+
+    printf("--- result: %s (%u failures) ---\n\n",
+           (failures == 0u) ? "PASS" : "FAIL", (unsigned)failures);
 }

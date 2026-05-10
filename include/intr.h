@@ -54,4 +54,18 @@ typedef void (*Intr_HandlerType)(void *arg);
  */
 void Intr_install(uint32 intr_source, Intr_HandlerType handler, void *arg);
 
+/*
+ * Description :
+ * Print a runtime report of every interrupt installed by this driver:
+ *  - source ID, CPU int chosen, DPORT map register read-back, mismatch flag
+ *  - Xtensa INTENABLE bit state for each chosen CPU int
+ *  - core ID at call time (must be 0 = PRO_CPU)
+ *  - BT-controller collision scan: if BT initialised, ensures none of the
+ *    BT source map registers (sources 3..8) point at a CPU int we own.
+ *
+ * Intended to be called once from app_main after all interrupt-using
+ * subsystems are initialised. Uses printf only.
+ */
+void Intr_diagnose(void);
+
 #endif /* INTR_H_ */
