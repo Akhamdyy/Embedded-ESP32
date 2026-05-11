@@ -18,8 +18,9 @@
  *  WALL_FOLLOW   all blank > 1 s                         WALL_LOST
  *  TURN_LEFT     settle ticks done → turnBegin; turnStep TRUE  POST_TURN
  *  TURN_RIGHT    settle ticks done → turnBegin; turnStep TRUE  POST_TURN
- *  POST_TURN     F ≤ FRONT_BLOCKED_CM                   WALL_FOLLOW
- *  POST_TURN     ≥ POST_TURN_MIN_TICKS AND both walls    WALL_FOLLOW
+ *  POST_TURN     ticks < POST_TURN_MIN_TICKS            POST_TURN (PID lane-centers)
+ *  POST_TURN     ticks ≥ POST_TURN_MIN_TICKS, F blocked WALL_FOLLOW
+ *  POST_TURN     ticks ≥ POST_TURN_MIN_TICKS, both walls WALL_FOLLOW
  *  WALL_LOST     any sensor < WALL_FAR_CM               WALL_FOLLOW
  *  WALL_LOST     5 s timeout                            STOP
  *  STOP          —                                       STOP
@@ -55,7 +56,7 @@
 #define BLANK_DEBOUNCE      10u                 /* 500 ms all-blank → STOP         */
 #define LOST_TIMEOUT_TICKS  (5000u / TICK_MS)
 #define TURN_SETTLE_TICKS    6u                 /* 300 ms active brake before spin */
-#define POST_TURN_MIN_TICKS (500u / TICK_MS)    /* 500 ms — short corridors        */
+#define POST_TURN_MIN_TICKS (2000u / TICK_MS)   /* 2 s — long enough to clear the corner so WF can't double-turn */
 #define CORRIDOR_CONFIRM     4u                 /* both walls stable for 200 ms    */
 #define BT_PERIOD_TICKS      5u                 /* bluetooth telemetry @ 4 Hz      */
 #define TURN_CONFIRM_TICKS   2u                 /* require N consecutive open reads */
@@ -249,8 +250,8 @@ static void on_entry(FSM_StateID s)
             s_post_ticks    = 0u;
             s_confirm_ticks = 0u;
             PID_reset();
-            Car_moveForward(BASE_SPEED, BASE_SPEED);
-            bluetooth_send("[FSM] POST_TURN\n");
+            Car_moveForward(BASE_SPEED, BASE_SPEED); /* initial kick — PID takes over next tick */
+            bluetooth_send("[FSM] POST_TURN (PID recenter)\n");
             break;
 
         default:
@@ -397,29 +398,34 @@ static FSM_StateID state_turn(MPU6050_TurnDir dir)
 static FSM_StateID state_turn_left(void)  { return state_turn(MPU6050_TURN_LEFT);  }
 static FSM_StateID state_turn_right(void) { return state_turn(MPU6050_TURN_RIGHT); }
 
-/* Drives forward after a turn.
- * Guarantees POST_TURN_MIN_TICKS (2 s) of forward motion regardless of sensors.
- * After the guard, exits to WALL_FOLLOW when either a front wall is seen OR
- * both side walls have been stable for CORRIDOR_CONFIRM ticks.
- * The 2 s guard is what prevents the infinite-turn loop when a turn overshoots
- * and leaves the front sensor pointing at a wall. */
+/* Re-centers with PID for POST_TURN_MIN_TICKS (2 s) after every turn.
+ *
+ * The hard guard window has two jobs:
+ *   1) Lock turn-detection off long enough for the car to physically clear
+ *      the corner so WALL_FOLLOW can't see the just-passed wall and commit
+ *      to another turn within 100 ms — the "constantly turning after a turn"
+ *      trap.
+ *   2) Run PID lane-centering so the car straightens up before it ever
+ *      returns to WALL_FOLLOW. PID does nothing when both sides are clear
+ *      (> threshold), so it acts as drive-straight in open areas and only
+ *      corrects when the car emerges from the turn pointed at a wall. */
 static FSM_StateID state_post_turn(void)
 {
     static uint32 bt_tick = 0u;
+    const  float32 dt_s   = (float32)TICK_MS / 1000.0f;
     uint16 f, l, r;
-    const char *tag;
+    const char *tag = "PT/PID";
 
     s_post_ticks++;
     f = read_front_filtered();
     l = read_cm(ULTRASONIC_LEFT);
     r = read_cm(ULTRASONIC_RIGHT);
 
-    /* Hard guard — drive forward, no exits whatsoever (PID disabled) */
+    /* Hard guard — no exits, PID re-centers while the car clears the corner */
     if (s_post_ticks < POST_TURN_MIN_TICKS)
     {
         s_confirm_ticks = 0u;
-        Car_moveForward(BASE_SPEED, BASE_SPEED);
-        tag = "PT/STR";
+        PID_update(dt_s);
         goto telemetry;
     }
 
@@ -455,8 +461,8 @@ static FSM_StateID state_post_turn(void)
         s_confirm_ticks = 0u;
     }
 
-    Car_moveForward(BASE_SPEED, BASE_SPEED);
-    tag = "PT/STR";
+    /* Past the guard but no exit triggered — keep PID active */
+    PID_update(dt_s);
 
 telemetry:
     if (++bt_tick >= BT_PERIOD_TICKS)
