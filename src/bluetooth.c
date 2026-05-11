@@ -36,3 +36,8 @@ uint16 bluetooth_recv(uint8 *buf, uint16 maxlen)
 {
     return BT_recvSPP(buf, maxlen);
 }
+
+void bluetooth_setRxCallback(bluetooth_rx_cb_t cb)
+{
+    BT_setRxCallback((BT_RxCallbackType)cb);
+}

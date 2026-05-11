@@ -76,4 +76,6 @@ boolean BT_isSPPConnected(void);
  */
 uint16 BT_recvSPP(uint8 *buf, uint16 maxlen);
 
+void BT_setRxCallback(BT_RxCallbackType cb);
+
 #endif /* BT_H_ */

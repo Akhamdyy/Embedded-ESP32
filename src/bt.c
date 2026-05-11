@@ -57,6 +57,7 @@ static volatile boolean s_connected       = FALSE;
 
 static BT_ConnectedCallbackType    s_on_connect    = NULL;
 static BT_DisconnectedCallbackType s_on_disconnect = NULL;
+static BT_RxCallbackType           s_on_rx         = NULL;
 
 static uint8           s_rx_buf[RX_BUF_SIZE];
 static volatile uint16 s_rx_head = 0u;
@@ -189,6 +190,7 @@ static void prv_spp_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param
             uint16 i;
             for (i = 0u; i < (uint16)param->data_ind.len; i++)
                 prv_rxbuf_push(param->data_ind.data[i]);
+            if (s_on_rx != NULL) s_on_rx(param->data_ind.data, (uint16)param->data_ind.len);
         }
         break;
 
@@ -295,3 +297,5 @@ uint16 BT_recvSPP(uint8 *buf, uint16 maxlen)
     }
     return count;
 }
+
+void BT_setRxCallback(BT_RxCallbackType cb) { s_on_rx = cb; }

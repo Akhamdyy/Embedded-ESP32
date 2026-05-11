@@ -47,4 +47,7 @@ boolean bluetooth_is_connected(void);
  */
 uint16 bluetooth_recv(uint8 *buf, uint16 maxlen);
 
+typedef void (*bluetooth_rx_cb_t)(const uint8 *data, uint16 len);
+void bluetooth_setRxCallback(bluetooth_rx_cb_t cb);
+
 #endif /* BLUETOOTH_H_ */
