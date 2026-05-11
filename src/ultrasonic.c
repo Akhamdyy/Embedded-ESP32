@@ -100,13 +100,36 @@ static void trig_pulse_timer_cb(void *arg)
 }
 
 /*
+ * Round-robin pattern.  FRONT gets priority — fired twice per pattern cycle so
+ * the front distance refreshes at 2× the rate of the sides.  This matters for
+ * collision avoidance while approaching corners.
+ *
+ *   slot 0  → FRONT
+ *   slot 1  → LEFT
+ *   slot 2  → FRONT
+ *   slot 3  → RIGHT
+ *
+ * With a 70 ms slot the front refreshes every 140 ms, sides every 280 ms.
+ * Each sensor still has ≥140 ms gap → safely above the HC-SR04 60 ms minimum.
+ */
+static const uint8_t round_robin_pattern[] = {
+    (uint8_t)ULTRASONIC_FRONT,
+    (uint8_t)ULTRASONIC_LEFT,
+    (uint8_t)ULTRASONIC_FRONT,
+    (uint8_t)ULTRASONIC_RIGHT,
+};
+#define ROUND_ROBIN_LEN  (sizeof(round_robin_pattern) / sizeof(round_robin_pattern[0]))
+
+/*
  * Periodic timer callback — fires every measurement_interval_ms.
- * Fires one sensor per tick in round-robin fashion.
+ * Triggers one sensor per tick following the round-robin pattern above.
  */
 static void measurement_timer_cb(void *arg)
 {
     (void)arg;
-    static uint32_t current = 0;
+    static uint32_t step = 0;
+    uint32_t current = (uint32_t)round_robin_pattern[step];
+    step = (step + 1U) % ROUND_ROBIN_LEN;
 
     /* Log previous result for this slot */
     uint16 d = sensor_state[current].last_distance;
@@ -118,8 +141,6 @@ static void measurement_timer_cb(void *arg)
     /* Start trigger pulse: HIGH → one-shot timer will pull it LOW after 10 µs */
     GPIO_writePin(sensor_cfg[current].trig_port, sensor_cfg[current].trig_pin, LOGIC_HIGH);
     Timer_startOnce(sensor_state[current].trig_pulse_timer, TRIG_PULSE_US);
-
-    current = (current + 1U) % (uint32_t)ULTRASONIC_COUNT;
 }
 
 /*

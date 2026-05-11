@@ -38,10 +38,15 @@
 /* Calibration: 20 ticks × 50 ms FSM tick = 1 second of samples */
 #define CALIBRATION_SAMPLES 20u
 
-/* Stop integrating this many degrees before 90° — motor inertia covers the rest.
- * At 16 V batteries the inertia is much bigger so we stop sooner.
- * Tune upward if undershooting, downward if overshooting. */
-#define TARGET_ANGLE_DEG    70.0f
+/* Per-direction target — motor / gyro asymmetry means one direction can
+ * over- or under-rotate even with the same target.  Tune each one against
+ * the physical 90° mark independently:
+ *   - left rotates too far  → lower TARGET_ANGLE_LEFT
+ *   - left rotates too short → raise TARGET_ANGLE_LEFT
+ *   - same for right.
+ * Inertia after the brake makes up the rest of the 90°. */
+#define TARGET_ANGLE_LEFT   80.0f
+#define TARGET_ANGLE_RIGHT  80.0f
 
 /*******************************************************************************
  *                         Private Data                                        *
@@ -54,8 +59,9 @@ static float32 s_calib_sum    = 0.0f;
 static uint16  s_calib_count  = 0u;
 
 /* Turn state */
-static float32 s_turn_angle   = 0.0f;
-static sint64  s_turn_prev_us = 0;
+static float32         s_turn_angle   = 0.0f;
+static sint64          s_turn_prev_us = 0;
+static MPU6050_TurnDir s_turn_dir     = MPU6050_TURN_LEFT;
 
 /*******************************************************************************
  *                         Private Functions                                   *
@@ -113,6 +119,7 @@ void MPU6050_turnBegin(MPU6050_TurnDir dir, uint8 speed)
 {
     s_turn_angle   = 0.0f;
     s_turn_prev_us = Timer_getTimeUs();
+    s_turn_dir     = dir;
 
     if (dir == MPU6050_TURN_RIGHT)
     {
@@ -138,13 +145,19 @@ boolean MPU6050_turnStep(void)
     s_turn_prev_us = now_us;
     s_turn_angle  += rate * dt;
 
-    printf("[TURN] rate=%.1f dps  angle=%.1f deg\n",
-           (double)rate, (double)s_turn_angle);
+    float32 target = (s_turn_dir == MPU6050_TURN_LEFT)
+                     ? TARGET_ANGLE_LEFT
+                     : TARGET_ANGLE_RIGHT;
 
-    if (fabsf(s_turn_angle) >= TARGET_ANGLE_DEG)
+    printf("[TURN] dir=%c rate=%.1f dps  angle=%.1f / %.1f deg\n",
+           (s_turn_dir == MPU6050_TURN_LEFT) ? 'L' : 'R',
+           (double)rate, (double)s_turn_angle, (double)target);
+
+    if (fabsf(s_turn_angle) >= target)
     {
         Motor_brakeAll();
-        printf("[TURN] brake @ %.1f deg\n", (double)s_turn_angle);
+        printf("[TURN] brake @ %.1f deg (target %.1f)\n",
+               (double)s_turn_angle, (double)target);
         return TRUE;
     }
     return FALSE;

@@ -41,7 +41,7 @@
  *                         Tunable Constants                                   *
  *******************************************************************************/
 
-#define FRONT_BLOCKED_CM    35u                 /* decide-turn threshold           */
+#define FRONT_BLOCKED_CM    45u                 /* decide-turn threshold — earlier commit, more room to brake */
 #define FRONT_SLOWDOWN_CM   75u                 /* below this distance → cruise slow */
 #define WALL_OPEN_CM        40u                 /* side ≥ 40 cm = truly open → can turn */
 #define WALL_PID_CM         30u                 /* both sides ≤ 30 cm → PID centres */
@@ -112,6 +112,40 @@ static uint16 read_cm(Ultrasonic_SensorID id)
 {
     uint16 d = Ultrasonic_getDistance(id);
     return (d == ULTRASONIC_OUT_OF_RANGE) ? 400u : d;
+}
+
+/* Asymmetric front-distance filter.
+ *
+ *   close reading → trust immediately   (collision-safe direction)
+ *   far reading   → require 4 ticks (~200 ms) of agreement before accepting
+ *
+ * Kills single-tick "wall vanished" spikes from HC-SR04 missed echoes that
+ * otherwise let the car cruise into a wall.  The front is now also refreshed
+ * twice per round-robin cycle (140 ms), so this debounce typically clears in
+ * one fresh reading. */
+static uint16 read_front_filtered(void)
+{
+    static uint16 cached    = 400u;
+    static uint32 far_ticks = 0u;
+    const  uint16 STEP_CM   = 15u;   /* tolerance: same-or-closer threshold */
+    const  uint32 FAR_HOLD  = 4u;    /* ticks of agreement to accept "far"   */
+
+    uint16 raw = read_cm(ULTRASONIC_FRONT);
+
+    if (raw <= cached + STEP_CM)
+    {
+        /* Same or closer → take it */
+        cached    = raw;
+        far_ticks = 0u;
+    }
+    else if (++far_ticks >= FAR_HOLD)
+    {
+        /* Sustained "farther" reading — believe it */
+        cached    = raw;
+        far_ticks = 0u;
+    }
+    /* else keep previous cached value while the spike is suspected */
+    return cached;
 }
 
 /* Milliseconds since the FSM first entered IDLE.  Useful for correlating
@@ -234,7 +268,8 @@ static FSM_StateID state_idle(void)
     if (!s_idle_init_done)
     {
         Motor_init();
-        Ultrasonic_initAll(60u);
+        /* 70 ms round-robin → each sensor reads once per 210 ms (70×3) */
+        Ultrasonic_initAll(70u);
         MPU6050_init();
         PID_init(&k_pid);
         bluetooth_init("ESP32-Car");
@@ -283,7 +318,7 @@ static FSM_StateID state_wall_follow(void)
      * Car drives straight at BASE_SPEED, only transitions on corner detection.
      * No blank-STOP, no stuck-STOP, no dead-end-STOP. */
 
-    uint16 f = read_cm(ULTRASONIC_FRONT);
+    uint16 f = read_front_filtered();
     uint16 l = read_cm(ULTRASONIC_LEFT);
     uint16 r = read_cm(ULTRASONIC_RIGHT);
 
@@ -375,7 +410,7 @@ static FSM_StateID state_post_turn(void)
     const char *tag;
 
     s_post_ticks++;
-    f = read_cm(ULTRASONIC_FRONT);
+    f = read_front_filtered();
     l = read_cm(ULTRASONIC_LEFT);
     r = read_cm(ULTRASONIC_RIGHT);
 
