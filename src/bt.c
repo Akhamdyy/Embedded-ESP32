@@ -31,6 +31,7 @@
 
 static BT_ConnectedCallbackType    s_on_connect    = NULL;
 static BT_DisconnectedCallbackType s_on_disconnect = NULL;
+static BT_RxCallbackType           s_on_rx         = NULL;
 static volatile boolean            s_connected     = FALSE;
 static volatile uint32_t           s_spp_handle    = 0;
 static const char                 *s_device_name   = NULL;
@@ -100,7 +101,11 @@ static void spp_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         break;
 
     case ESP_SPP_DATA_IND_EVT:
-        /* Incoming data from the phone — extend when robot needs commands */
+        if (s_on_rx && param->data_ind.data && param->data_ind.len > 0)
+        {
+            s_on_rx((const uint8 *)param->data_ind.data,
+                    (uint16)param->data_ind.len);
+        }
         break;
 
     case ESP_SPP_WRITE_EVT:
@@ -192,4 +197,9 @@ void BT_sendSPP(const uint8 *data, uint16 len)
 boolean BT_isSPPConnected(void)
 {
     return s_connected;
+}
+
+void BT_setSPPRxCallback(BT_RxCallbackType cb)
+{
+    s_on_rx = cb;
 }

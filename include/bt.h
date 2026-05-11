@@ -28,6 +28,7 @@ typedef enum
 /* Callbacks fired from the Bluedroid task — keep them short, no blocking. */
 typedef void (*BT_ConnectedCallbackType)(void);
 typedef void (*BT_DisconnectedCallbackType)(void);
+typedef void (*BT_RxCallbackType)(const uint8 *data, uint16 len);
 
 /*******************************************************************************
  *                              Functions Prototypes                           *
@@ -62,5 +63,12 @@ void BT_sendSPP(const uint8 *data, uint16 len);
  * Return TRUE if an SPP client is currently connected.
  */
 boolean BT_isSPPConnected(void);
+
+/*
+ * Description:
+ * Register a callback for incoming SPP data.  Fires from the Bluedroid task —
+ * keep the callback short and non-blocking.  Pass NULL to deregister.
+ */
+void BT_setSPPRxCallback(BT_RxCallbackType cb);
 
 #endif /* BT_H_ */

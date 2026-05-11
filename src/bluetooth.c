@@ -31,3 +31,8 @@ boolean bluetooth_is_connected(void)
 {
     return BT_isSPPConnected();
 }
+
+void bluetooth_setRxCallback(bluetooth_rx_callback_t cb)
+{
+    BT_setSPPRxCallback((BT_RxCallbackType)cb);
+}

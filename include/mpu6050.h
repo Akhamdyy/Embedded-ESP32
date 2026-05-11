@@ -54,28 +54,34 @@ void MPU6050_init(void);
 
 /*
  * Description :
- * Average 100 gyro Z samples while the robot is stationary to compute
- * the zero-rate offset. Takes approximately 1 second.
- * Must be called after MPU6050_init() and before MPU6050_turn().
- * Robot must not be moving during this call.
+ * Call once per FSM tick while the robot is stationary.
+ * Accumulates gyro Z samples for zero-rate offset estimation.
+ * Returns TRUE when enough samples have been collected and the
+ * offset has been applied.  No blocking delays inside.
  */
-void MPU6050_calibrate(void);
+boolean MPU6050_calibrateStep(void);
 
 /*
  * Description :
  * Return the calibrated gyro Z rate in degrees per second.
- * Positive = counter-clockwise, Negative = clockwise (Z-up convention).
- * Useful for verifying sensor output before using MPU6050_turn().
  */
 float32 MPU6050_getGyroZ(void);
 
 /*
  * Description :
- * Perform a blocking 90-degree pivot turn.
- * Drives all 4 motors for an in-place rotation, integrates gyro Z at 100 Hz,
- * and stops all motors when 90 degrees is reached.
- * speed: 0-255 (motor speed during the turn)
+ * Start a 90-degree pivot turn.  Sets motor directions and captures
+ * the initial timestamp.  Call once when entering the turn state.
+ * No blocking delays inside.
  */
-void MPU6050_turn(MPU6050_TurnDir dir, uint8 speed);
+void MPU6050_turnBegin(MPU6050_TurnDir dir, uint8 speed);
+
+/*
+ * Description :
+ * Advance the turn by one FSM tick.  Reads gyro Z, integrates the
+ * angle, and returns TRUE when TARGET_ANGLE_DEG is reached (motors
+ * are braked automatically).  Returns FALSE while still turning.
+ * No blocking delays inside.
+ */
+boolean MPU6050_turnStep(void);
 
 #endif /* MPU6050_H_ */

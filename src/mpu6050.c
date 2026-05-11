@@ -4,8 +4,9 @@
  *
  * File Name: mpu6050.c
  *
- * Description: Source file for MPU-6050 / MPU-6500 gyroscope driver.
- *              Uses gyro Z-axis integration for 90-degree turn detection.
+ * Description: Non-blocking MPU-6050 / MPU-6500 gyroscope driver.
+ *              Calibration and turn are step functions — called once per
+ *              FSM tick with no vTaskDelay inside.
  *
  *******************************************************************************/
 
@@ -13,10 +14,12 @@
 #include "motor.h"
 #include "i2c.h"
 #include "timer.h"
+#include "bluetooth.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 /*******************************************************************************
  *                         Private Definitions                                 *
@@ -24,25 +27,35 @@
 
 #define MPU_ADDR            0x68
 
-/* MPU-6050 / MPU-6500 registers */
-#define REG_SMPLRT_DIV      0x19    /* Sample rate divider */
-#define REG_CONFIG          0x1A    /* DLPF config */
-#define REG_GYRO_CONFIG     0x1B    /* Gyro full-scale range */
-#define REG_PWR_MGMT_1      0x6B    /* Power management */
-#define REG_GYRO_ZOUT_H     0x47    /* Gyro Z high byte (low byte follows) */
+#define REG_SMPLRT_DIV      0x19
+#define REG_CONFIG          0x1A
+#define REG_GYRO_CONFIG     0x1B
+#define REG_PWR_MGMT_1      0x6B
+#define REG_GYRO_ZOUT_H     0x47
 
-/* ±250 °/s → 131 LSB per °/s */
-#define GYRO_SENSITIVITY    131.0f
+#define GYRO_SENSITIVITY    131.0f   /* ±250 °/s → 131 LSB per °/s */
 
-#define CALIBRATION_SAMPLES 100
-#define POLL_INTERVAL_MS    10      /* 100 Hz integration rate */
-#define TARGET_ANGLE_DEG    83.0f
+/* Calibration: 20 ticks × 50 ms FSM tick = 1 second of samples */
+#define CALIBRATION_SAMPLES 20u
+
+/* Stop integrating this many degrees before 90° — motor inertia covers the rest.
+ * At 16 V batteries the inertia is much bigger so we stop sooner.
+ * Tune upward if undershooting, downward if overshooting. */
+#define TARGET_ANGLE_DEG    70.0f
 
 /*******************************************************************************
  *                         Private Data                                        *
  *******************************************************************************/
 
-static float32 gyro_z_offset = 0.0f;
+static float32 gyro_z_offset  = 0.0f;
+
+/* Calibration state */
+static float32 s_calib_sum    = 0.0f;
+static uint16  s_calib_count  = 0u;
+
+/* Turn state */
+static float32 s_turn_angle   = 0.0f;
+static sint64  s_turn_prev_us = 0;
 
 /*******************************************************************************
  *                         Private Functions                                   *
@@ -50,8 +63,8 @@ static float32 gyro_z_offset = 0.0f;
 
 static sint16 read_gyro_z_raw(void)
 {
-    uint8 buf[2] = {0, 0};
-    I2C_readBytes(MPU_ADDR, REG_GYRO_ZOUT_H, buf, 2);
+    uint8 buf[2] = {0u, 0u};
+    I2C_readBytes(MPU_ADDR, REG_GYRO_ZOUT_H, buf, 2u);
     return (sint16)((buf[0] << 8) | buf[1]);
 }
 
@@ -59,57 +72,47 @@ static sint16 read_gyro_z_raw(void)
  *                          Functions Definitions                              *
  *******************************************************************************/
 
-/*
- * Description :
- * Initialize I2C bus and configure MPU-6050 / MPU-6500.
- */
 void MPU6050_init(void)
 {
     I2C_init();
+    I2C_writeReg(MPU_ADDR, REG_PWR_MGMT_1, 0x00u);
+    I2C_writeReg(MPU_ADDR, REG_SMPLRT_DIV, 0x09u);
+    I2C_writeReg(MPU_ADDR, REG_CONFIG,      0x01u);
+    I2C_writeReg(MPU_ADDR, REG_GYRO_CONFIG, 0x00u);
 
-    I2C_writeReg(MPU_ADDR, REG_PWR_MGMT_1, 0x00);  /* clear sleep bit — wake up */
-    I2C_writeReg(MPU_ADDR, REG_SMPLRT_DIV, 0x09);  /* 100 Hz: 1 kHz / (1 + 9) */
-    I2C_writeReg(MPU_ADDR, REG_CONFIG,      0x01);  /* DLPF 188 Hz bandwidth */
-    I2C_writeReg(MPU_ADDR, REG_GYRO_CONFIG, 0x00);  /* ±250 °/s */
+    /* Reset calibration state so a fresh calibrateStep sequence starts */
+    s_calib_sum   = 0.0f;
+    s_calib_count = 0u;
+    gyro_z_offset = 0.0f;
+
+    printf("MPU6050: init done — keep robot still for calibration\n");
 }
 
-/*
- * Description :
- * Calibrate zero-rate offset by averaging samples while robot is stationary.
- */
-void MPU6050_calibrate(void)
+boolean MPU6050_calibrateStep(void)
 {
-    printf("MPU6050: calibrating — keep robot still...\n");
+    s_calib_sum += (float32)read_gyro_z_raw() / GYRO_SENSITIVITY;
+    s_calib_count++;
 
-    float32 sum = 0.0f;
-    int i;
-    for (i = 0; i < CALIBRATION_SAMPLES; i++)
+    if (s_calib_count >= CALIBRATION_SAMPLES)
     {
-        sum += (float32)read_gyro_z_raw() / GYRO_SENSITIVITY;
-        vTaskDelay(pdMS_TO_TICKS(POLL_INTERVAL_MS));
+        gyro_z_offset = s_calib_sum / (float32)CALIBRATION_SAMPLES;
+        s_calib_sum   = 0.0f;
+        s_calib_count = 0u;
+        printf("MPU6050: ready  offset=%.3f dps\n", gyro_z_offset);
+        return TRUE;
     }
-    gyro_z_offset = sum / (float32)CALIBRATION_SAMPLES;
-
-    printf("MPU6050: ready (zero-rate offset = %.3f dps)\n", gyro_z_offset);
+    return FALSE;
 }
 
-/*
- * Description :
- * Return calibrated gyro Z rate in degrees per second.
- */
 float32 MPU6050_getGyroZ(void)
 {
     return ((float32)read_gyro_z_raw() / GYRO_SENSITIVITY) - gyro_z_offset;
 }
 
-/*
- * Description :
- * Blocking 90-degree pivot turn using gyro Z integration.
- */
-void MPU6050_turn(MPU6050_TurnDir dir, uint8 speed)
+void MPU6050_turnBegin(MPU6050_TurnDir dir, uint8 speed)
 {
-    float32 angle   = 0.0f;
-    sint64  prev_us = Timer_getTimeUs();
+    s_turn_angle   = 0.0f;
+    s_turn_prev_us = Timer_getTimeUs();
 
     if (dir == MPU6050_TURN_RIGHT)
     {
@@ -125,17 +128,24 @@ void MPU6050_turn(MPU6050_TurnDir dir, uint8 speed)
         Motor_drive(MOTOR_FRONT_RIGHT, MOTOR_FORWARD,  speed);
         Motor_drive(MOTOR_REAR_RIGHT,  MOTOR_FORWARD,  speed);
     }
+}
 
-    while (fabsf(angle) < TARGET_ANGLE_DEG)
+boolean MPU6050_turnStep(void)
+{
+    sint64  now_us = Timer_getTimeUs();
+    float32 dt     = (float32)(now_us - s_turn_prev_us) / 1000000.0f;
+    float32 rate   = MPU6050_getGyroZ();
+    s_turn_prev_us = now_us;
+    s_turn_angle  += rate * dt;
+
+    printf("[TURN] rate=%.1f dps  angle=%.1f deg\n",
+           (double)rate, (double)s_turn_angle);
+
+    if (fabsf(s_turn_angle) >= TARGET_ANGLE_DEG)
     {
-        vTaskDelay(pdMS_TO_TICKS(POLL_INTERVAL_MS));
-
-        sint64  now_us = Timer_getTimeUs();
-        float32 dt     = (float32)(now_us - prev_us) / 1000000.0f;
-        prev_us        = now_us;
-
-        angle += MPU6050_getGyroZ() * dt;
+        Motor_brakeAll();
+        printf("[TURN] brake @ %.1f deg\n", (double)s_turn_angle);
+        return TRUE;
     }
-
-    Motor_stopAll();
+    return FALSE;
 }

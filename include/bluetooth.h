@@ -45,4 +45,14 @@ void bluetooth_send(const char *msg);
  */
 boolean bluetooth_is_connected(void);
 
+/* Callback for incoming SPP bytes — fires from the Bluedroid task. */
+typedef void (*bluetooth_rx_callback_t)(const uint8 *data, uint16 len);
+
+/*
+ * Description :
+ * Register a function to be called whenever bytes arrive over SPP.
+ * Pass NULL to deregister.  Keep the callback short and non-blocking.
+ */
+void bluetooth_setRxCallback(bluetooth_rx_callback_t cb);
+
 #endif /* BLUETOOTH_H_ */

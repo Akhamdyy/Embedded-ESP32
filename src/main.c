@@ -1,11 +1,11 @@
-
 #include "fsm.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <stdio.h>
 
 static const char *const k_state_str[] = {
-    "IDLE", "WALL_FOLLOW", "WALL_LOST", "STOP", "REALIGN", "TURN_LEFT", "TURN_RIGHT"
+    "IDLE", "WALL_FOLLOW", "WALL_LOST", "STOP",
+    "TURN_LEFT", "TURN_RIGHT", "POST_TURN"
 };
 
 /* Prints the current FSM state to serial every 500 ms. */

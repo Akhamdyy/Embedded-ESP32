@@ -35,9 +35,10 @@
  *******************************************************************************/
 
 static PID_Config pid_cfg;
-static float32    integral   = 0.0f;
-static float32    prev_error = 0.0f;
-static boolean    initialised = FALSE;
+static float32    integral       = 0.0f;
+static float32    prev_error     = 0.0f;
+static boolean    initialised    = FALSE;
+static boolean    first_after_reset = TRUE;   /* suppresses derivative kick */
 
 /*******************************************************************************
  *                         Private Functions                                   *
@@ -67,10 +68,11 @@ static uint8 clamp_speed(float32 val)
  */
 void PID_init(const PID_Config *cfg)
 {
-    pid_cfg     = *cfg;
-    integral    = 0.0f;
-    prev_error  = 0.0f;
-    initialised = TRUE;
+    pid_cfg           = *cfg;
+    integral          = 0.0f;
+    prev_error        = 0.0f;
+    initialised       = TRUE;
+    first_after_reset = TRUE;
 }
 
 /*
@@ -100,10 +102,22 @@ void PID_update(float32 dt_s)
     }
 
     /* --- PID computation --- */
-    float32 error      = (float32)left_dist - (float32)right_dist;
-    integral          += error * dt_s;
-    float32 derivative = (error - prev_error) / dt_s;
-    prev_error         = error;
+    float32 error = (float32)left_dist - (float32)right_dist;
+    integral     += error * dt_s;
+
+    /* Skip derivative on the first call after a reset to suppress the
+     * "derivative kick" — otherwise prev_error=0 and the very first error
+     * value produces a huge spurious derivative pulse that slaps the motors. */
+    float32 derivative = 0.0f;
+    if (first_after_reset)
+    {
+        first_after_reset = FALSE;
+    }
+    else
+    {
+        derivative = (error - prev_error) / dt_s;
+    }
+    prev_error = error;
 
     float32 output = (pid_cfg.kp * error)
                    + (pid_cfg.ki * integral)
@@ -123,6 +137,7 @@ void PID_update(float32 dt_s)
  */
 void PID_reset(void)
 {
-    integral   = 0.0f;
-    prev_error = 0.0f;
+    integral          = 0.0f;
+    prev_error        = 0.0f;
+    first_after_reset = TRUE;
 }

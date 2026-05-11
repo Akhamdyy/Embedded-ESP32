@@ -31,9 +31,9 @@ typedef enum
     FSM_STATE_WALL_FOLLOW,
     FSM_STATE_WALL_LOST,
     FSM_STATE_STOP,
-    FSM_STATE_REALIGN,
     FSM_STATE_TURN_LEFT,
-    FSM_STATE_TURN_RIGHT
+    FSM_STATE_TURN_RIGHT,
+    FSM_STATE_POST_TURN   /* drives forward after turn; turn detection locked 2 s */
 } FSM_StateID;
 
 /*******************************************************************************
