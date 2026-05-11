@@ -41,9 +41,9 @@
  *                         Tunable Constants                                   *
  *******************************************************************************/
 
-#define FRONT_BLOCKED_CM    55u                 /* critical override threshold — between 50 (too late) and 65 (too early) */
+#define FRONT_BLOCKED_CM    65u                 /* commit turn here — stops a bit further from the wall */
 #define FRONT_SLOWDOWN_CM   75u                 /* below this distance → cruise slow */
-#define WALL_OPEN_CM        35u                 /* side ≥ 35 cm = open (10 cm buffer over the 25 cm in-corridor max) */
+#define WALL_OPEN_CM        40u                 /* side ≥ 40 cm = truly open → can turn */
 #define WALL_PID_CM         30u                 /* both sides ≤ 30 cm → PID centres */
 #define WALL_NEAR_CM        13u                 /* PID centre setpoint             */
 /* Speeds tuned for the 16 V battery — these are PWM duty values; the actual
@@ -82,7 +82,6 @@ static sint64      s_boot_us;       /* timestamp at first idle entry */
 /* IDLE sub-state: calibration first, then wait for '1' from Bluetooth */
 static boolean             s_calib_done    = FALSE;
 static volatile boolean    s_start_signal  = FALSE;
-static volatile boolean    s_stop_signal   = FALSE;   /* '2' from BT — sticky */
 static boolean             s_armed_msg_sent = FALSE;
 
 /* WALL_FOLLOW sub-state — reset every time WF is entered */
@@ -210,18 +209,20 @@ static uint32 ms_since_boot(void)
     return (uint32)((now - s_boot_us) / 1000);
 }
 
-/* Poll the UART/BT RX ring buffer every FSM tick.
- *   '1' → start signal (released by IDLE state)
- *   '2' → sticky stop signal (FSM bounces straight to STOP from anywhere) */
-static void poll_bt_commands(void)
+/* Poll the UART/BT RX ring buffer for an ASCII '1' (start command).
+ * Drains anything else.  Called once per FSM tick while in IDLE. */
+static void poll_start_signal(void)
 {
     uint8  rx[16];
     uint16 n = bluetooth_recv(rx, (uint16)sizeof(rx));
     uint16 i;
     for (i = 0u; i < n; i++)
     {
-        if (rx[i] == (uint8)'1') s_start_signal = TRUE;
-        if (rx[i] == (uint8)'2') s_stop_signal  = TRUE;
+        if (rx[i] == (uint8)'1')
+        {
+            s_start_signal = TRUE;
+            return;
+        }
     }
 }
 
@@ -353,7 +354,8 @@ static FSM_StateID state_idle(void)
         s_armed_msg_sent = TRUE;
     }
 
-    /* poll_bt_commands runs at the fsm_task level; we just check the flag here */
+    poll_start_signal();
+
     if (s_start_signal)
     {
         bluetooth_send("[GO] start command received\n");
@@ -377,8 +379,7 @@ static FSM_StateID state_wall_follow(void)
     uint16 r = read_cm(ULTRASONIC_RIGHT);
 
     /* Approaching a wall — require TURN_CONFIRM_TICKS consecutive ticks
-     * with a side ≥ WALL_OPEN_CM before committing.  Plus a critical-front
-     * safety net that forces a turn before the bumper reaches the wall. */
+     * with a side ≥ WALL_OPEN_CM before committing. */
     if (f <= FRONT_SLOWDOWN_CM)
     {
         if (l >= WALL_OPEN_CM) s_l_open_ticks++; else s_l_open_ticks = 0u;
@@ -391,25 +392,7 @@ static FSM_StateID state_wall_follow(void)
         if (l_open)           return FSM_STATE_TURN_LEFT;
         if (r_open)           return FSM_STATE_TURN_RIGHT;
 
-        /* === CRITICAL FRONT OVERRIDE ===
-         * Front is at the commit threshold but neither side debounced open in
-         * time.  Don't sit there crawling into the wall — pick the more-open
-         * side and commit the turn NOW.  This is the safety net for the case
-         * where the corner geometry hides the open side from the ultrasonic
-         * until the car is almost on top of the front wall. */
-        if (f <= FRONT_BLOCKED_CM)
-        {
-            char buf[64];
-            FSM_StateID dir = (l > r) ? FSM_STATE_TURN_LEFT : FSM_STATE_TURN_RIGHT;
-            (void)snprintf(buf, sizeof(buf),
-                           "[CRITICAL] F=%u L=%u R=%u -> %s (forced)\n",
-                           (unsigned)f, (unsigned)l, (unsigned)r,
-                           (dir == FSM_STATE_TURN_LEFT) ? "TURN_LEFT" : "TURN_RIGHT");
-            bluetooth_send(buf);
-            return dir;
-        }
-
-        /* Not critical yet — keep crawling slowly */
+        /* No side open — keep crawling slowly forward (no STOP) */
         Car_moveForward(SLOW_SPEED, SLOW_SPEED);
         tag = "SLOW";
         goto telemetry;
@@ -567,13 +550,7 @@ static FSM_StateID state_wall_lost(void)
 
 static FSM_StateID state_stop(void)
 {
-    /* Sticky when triggered by the user via Bluetooth '2'.  Otherwise (any
-     * vestigial automatic STOP path) bounce back so the car keeps running. */
-    if (s_stop_signal)
-    {
-        Motor_brakeAll();
-        return FSM_STATE_STOP;
-    }
+    /* Turn-only test mode: never stay in STOP, bounce back to WALL_FOLLOW. */
     return FSM_STATE_WALL_FOLLOW;
 }
 
@@ -593,7 +570,6 @@ void FSM_init(void)
     s_idle_init_done = FALSE;
     s_calib_done     = FALSE;
     s_start_signal   = FALSE;
-    s_stop_signal    = FALSE;
     s_armed_msg_sent = FALSE;
     s_boot_us        = Timer_getTimeUs();
 }
@@ -611,21 +587,6 @@ void fsm_task(void *pv)
 
     for (;;)
     {
-        /* Drain the BT RX ring every tick — sets s_start_signal / s_stop_signal */
-        poll_bt_commands();
-
-        /* '2' from BT is an unconditional STOP from any state */
-        if (s_stop_signal && s_state != FSM_STATE_STOP)
-        {
-            bluetooth_send("[STOP] '2' received -> halting\n");
-            bt_transition(s_state, FSM_STATE_STOP);
-            on_entry(FSM_STATE_STOP);
-            s_state = FSM_STATE_STOP;
-            Motor_brakeAll();
-            vTaskDelay(pdMS_TO_TICKS(TICK_MS));
-            continue;
-        }
-
         /* Heartbeat — every 100 ticks (5 s) regardless of state */
         if (++hb_ticks >= (5000u / TICK_MS))
         {
