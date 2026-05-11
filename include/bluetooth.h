@@ -1,16 +1,13 @@
 /******************************************************************************
  *
- * Module: Bluetooth Classic SPP
+ * Module: UART Serial (HAL) — replaces Bluetooth SPP
  *
  * File Name: bluetooth.h
  *
- * Description: Header file for the Bluetooth Classic SPP driver (HAL layer).
- *              Provides device discovery, connection tracking, and raw HCI
- *              ACL data transmission over the BT MCAL driver (bt.h).
- *
- *              The Android "Serial Bluetooth Terminal" app initiates the
- *              RFCOMM/SPP channel; this driver makes the device discoverable
- *              and connectable via raw HCI commands.
+ * Description: HAL header for serial communication over UART2.
+ *              Thin wrapper over the UART MCAL (bt.h).
+ *              API is kept identical to the former Bluetooth HAL so that
+ *              app-layer callers (main.c, fsm.c) require zero changes.
  *
  *******************************************************************************/
 
@@ -25,34 +22,29 @@
 
 /*
  * Description :
- * Initialise Bluetooth Classic. Powers on the controller, sets the device
- * name, Class of Device, page timeout, and enables inquiry + page scan.
- * Returns TRUE on success, FALSE on any failure.
- * Must be called once before bluetooth_send.
+ * Initialise UART2 at 115200 8N1.
+ * Returns TRUE on success, FALSE on failure.
  */
 boolean bluetooth_init(const char *device_name);
 
 /*
  * Description :
- * Send a null-terminated string as a raw HCI ACL packet over the active
- * connection. No-op if not connected or msg is empty / longer than 251 bytes.
+ * Transmit a null-terminated string over UART2 TX (polling).
+ * No-op if msg is empty or longer than 251 bytes.
  */
 void bluetooth_send(const char *msg);
 
 /*
  * Description :
- * Return TRUE if a remote device is currently connected.
+ * Return TRUE always — UART has no connection state.
  */
 boolean bluetooth_is_connected(void);
 
-/* Callback for incoming SPP bytes — fires from the Bluedroid task. */
-typedef void (*bluetooth_rx_callback_t)(const uint8 *data, uint16 len);
-
 /*
  * Description :
- * Register a function to be called whenever bytes arrive over SPP.
- * Pass NULL to deregister.  Keep the callback short and non-blocking.
+ * Copy up to maxlen bytes from the UART2 RX ring buffer into buf.
+ * Returns the number of bytes actually copied (0 if buffer is empty).
  */
-void bluetooth_setRxCallback(bluetooth_rx_callback_t cb);
+uint16 bluetooth_recv(uint8 *buf, uint16 maxlen);
 
 #endif /* BLUETOOTH_H_ */

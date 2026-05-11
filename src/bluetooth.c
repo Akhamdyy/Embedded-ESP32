@@ -1,11 +1,11 @@
 /******************************************************************************
  *
- * Module: Bluetooth Classic SPP
+ * Module: UART Serial (HAL) — replaces Bluetooth SPP
  *
  * File Name: bluetooth.c
  *
- * Description: HAL source for Bluetooth Classic SPP.
- *              Thin wrapper over the BT MCAL (bt.h). Exposes the three
+ * Description: HAL source for UART2 serial communication.
+ *              Thin wrapper over the UART MCAL (bt.h). Exposes the four
  *              application-facing functions defined in bluetooth.h without
  *              any direct ESP-IDF dependency.
  *
@@ -32,7 +32,7 @@ boolean bluetooth_is_connected(void)
     return BT_isSPPConnected();
 }
 
-void bluetooth_setRxCallback(bluetooth_rx_callback_t cb)
+uint16 bluetooth_recv(uint8 *buf, uint16 maxlen)
 {
-    BT_setSPPRxCallback((BT_RxCallbackType)cb);
+    return BT_recvSPP(buf, maxlen);
 }
