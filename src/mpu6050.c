@@ -45,8 +45,8 @@
  *   - left rotates too short → raise TARGET_ANGLE_LEFT
  *   - same for right.
  * Inertia after the brake makes up the rest of the 90°. */
-#define TARGET_ANGLE_LEFT   80.0f
-#define TARGET_ANGLE_RIGHT  80.0f
+#define TARGET_ANGLE_LEFT   62.0f
+#define TARGET_ANGLE_RIGHT  62.0f
 
 /*******************************************************************************
  *                         Private Data                                        *

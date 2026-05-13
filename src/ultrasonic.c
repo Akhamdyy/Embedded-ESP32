@@ -109,8 +109,10 @@ static void trig_pulse_timer_cb(void *arg)
  *   slot 2  → FRONT
  *   slot 3  → RIGHT
  *
- * With a 70 ms slot the front refreshes every 140 ms, sides every 280 ms.
- * Each sensor still has ≥140 ms gap → safely above the HC-SR04 60 ms minimum.
+ * With a 35 ms slot the front refreshes every 70 ms, sides every 140 ms.
+ * Each sensor still has ≥70 ms gap → above the HC-SR04 60 ms minimum.
+ * Slot must stay ≥ ECHO_TIMEOUT (30 ms) so a stray echo from the previous
+ * sensor can never collide with the next trigger.
  */
 static const uint8_t round_robin_pattern[] = {
     (uint8_t)ULTRASONIC_FRONT,
@@ -123,6 +125,9 @@ static const uint8_t round_robin_pattern[] = {
 /*
  * Periodic timer callback — fires every measurement_interval_ms.
  * Triggers one sensor per tick following the round-robin pattern above.
+ *
+ * Runs in the FreeRTOS timer service task; must be fast — no printf,
+ * no blocking calls.  Distance telemetry happens in the FSM task instead.
  */
 static void measurement_timer_cb(void *arg)
 {
@@ -130,13 +135,6 @@ static void measurement_timer_cb(void *arg)
     static uint32_t step = 0;
     uint32_t current = (uint32_t)round_robin_pattern[step];
     step = (step + 1U) % ROUND_ROBIN_LEN;
-
-    /* Log previous result for this slot */
-    uint16 d = sensor_state[current].last_distance;
-    if (d == ULTRASONIC_OUT_OF_RANGE)
-        printf("[%s] OOR\n", sensor_cfg[current].name);
-    else
-        printf("[%s] %u cm\n", sensor_cfg[current].name, (unsigned int)d);
 
     /* Start trigger pulse: HIGH → one-shot timer will pull it LOW after 10 µs */
     GPIO_writePin(sensor_cfg[current].trig_port, sensor_cfg[current].trig_pin, LOGIC_HIGH);

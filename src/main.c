@@ -8,5 +8,5 @@ void app_main(void)
     printf("\n=== ESP32 Wall-Follow FSM starting ===\n");
 
     FSM_init();
-    xTaskCreate(fsm_task, "fsm", 8192u, NULL, 5u, NULL);
+    xTaskCreate(fsm_task, "fsm", 16384u, NULL, 5u, NULL);
 }

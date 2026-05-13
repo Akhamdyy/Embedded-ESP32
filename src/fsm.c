@@ -41,26 +41,38 @@
  *                         Tunable Constants                                   *
  *******************************************************************************/
 
-#define FRONT_BLOCKED_CM    65u                 /* commit turn here — stops a bit further from the wall */
-#define FRONT_SLOWDOWN_CM   75u                 /* below this distance → cruise slow */
+#define FRONT_BLOCKED_CM    75u                 /* commit turn here — stops a bit further from the wall */
+#define FRONT_SLOWDOWN_CM   80u                 /* below this distance → cruise slow */
 #define WALL_OPEN_CM        40u                 /* side ≥ 40 cm = truly open → can turn */
 #define WALL_PID_CM         30u                 /* both sides ≤ 30 cm → PID centres */
 #define WALL_NEAR_CM        13u                 /* PID centre setpoint             */
 /* Speeds tuned for the 16 V battery — these are PWM duty values; the actual
  * physical motor voltage = (value / 255) * battery_voltage.
  * SLOW_SPEED must stay ≥ ~60 or the motor stalls and the driver beeps. */
-#define BASE_SPEED          90u                 /* normal cruise                   */
+#define BASE_SPEED          80u                 /* normal cruise                   */
 #define SLOW_SPEED          70u                 /* approach-the-wall cruise        */
-#define TURN_SPEED          90u                 /* rotation speed                  */
+#define TURN_SPEED          70u                 /* rotation speed                  */
 #define TICK_MS             50u
 #define BLANK_DEBOUNCE      10u                 /* 500 ms all-blank → STOP         */
 #define LOST_TIMEOUT_TICKS  (5000u / TICK_MS)
 #define TURN_SETTLE_TICKS    6u                 /* 300 ms active brake before spin */
-#define POST_TURN_MIN_TICKS (500u / TICK_MS)    /* 500 ms — short corridors        */
+#define POST_TURN_MIN_TICKS (300u / TICK_MS)    /* 300 ms — short corridors, fast react */
 #define CORRIDOR_CONFIRM     4u                 /* both walls stable for 200 ms    */
 #define BT_PERIOD_TICKS      5u                 /* bluetooth telemetry @ 4 Hz      */
 #define TURN_CONFIRM_TICKS   4u                 /* 200 ms — exceeds side sensor refresh (280 ms not quite, but kills single spikes) */
 #define STUCK_TIMEOUT_TICKS (15000u / TICK_MS)  /* 15 s without transition → STOP   */
+
+/* Hard-stop safety — when the front sensor reads ≤ FRONT_STOP_CM the car
+ * brakes immediately, holds for STOP_SETTLE_TICKS so sensors and chassis
+ * stabilize, then commits a turn toward whichever side has more room.
+ * Bumper sits ≈ 12.5 cm ahead of the front sensor, so STOP=30 keeps the
+ * bumper ≈ 17 cm clear of the wall. */
+#define FRONT_STOP_CM         30u
+#define STOP_SETTLE_TICKS      6u               /* 300 ms brake + sensor settle    */
+
+/* Single-wall centering setpoint — when only one wall is visible, hold the
+ * car at this distance from it (corridor half-width minus a margin). */
+#define SIDE_HOLD_CM          15u
 
 /*******************************************************************************
  *                         Private Data                                        *
@@ -82,12 +94,18 @@ static sint64      s_boot_us;       /* timestamp at first idle entry */
 /* IDLE sub-state: calibration first, then wait for '1' from Bluetooth */
 static boolean             s_calib_done    = FALSE;
 static volatile boolean    s_start_signal  = FALSE;
+static volatile boolean    s_stop_signal   = FALSE;
 static boolean             s_armed_msg_sent = FALSE;
+
+#define MAX_TURN_SEQ 64u
+static char    s_turn_seq[MAX_TURN_SEQ + 1u];   /* 'L' or 'R' entries, null-terminated */
+static uint32  s_turn_seq_len = 0u;
 
 /* WALL_FOLLOW sub-state — reset every time WF is entered */
 static uint32              s_wf_ticks      = 0u;
 static uint32              s_l_open_ticks  = 0u;
 static uint32              s_r_open_ticks  = 0u;
+static uint32              s_stop_ticks    = 0u;   /* hard-stop settle counter */
 
 /* Turn sub-state */
 static boolean     s_turn_started;
@@ -115,44 +133,10 @@ static uint16 read_cm(Ultrasonic_SensorID id)
     return (d == ULTRASONIC_OUT_OF_RANGE) ? 400u : d;
 }
 
-/* Gentle post-turn re-centring controller.
- *
- *   error = left - right (cm).
- *   correction = error / GAIN_DIV, clamped to ±MAX_CORRECT.
- *   left_speed  = BASE_SPEED - correction
- *   right_speed = BASE_SPEED + correction
- *
- * Compared to the regular PID:
- *   - Pure P (no I, no D) — no integrator wind-up, no derivative kick
- *   - Wider dead-band (DEADBAND_CM) than ultrasonic noise floor
- *   - Strict input gate: skips correction unless BOTH sides see in-corridor walls
- *   - Max correction limited to ±5 PWM out of BASE_SPEED=90 (≈5.5 %)
- *
- * The previous PID failed because its ±80 PWM correction angled the car so
- * hard that the front sensor saw corridor walls obliquely at the next corner.
- * This version's correction is too small to angle the car appreciably over
- * the few hundred ms POST_TURN lasts, but enough to nudge it toward centre. */
-static void apply_recenter(uint16 l, uint16 r)
+/* Apply a differential PWM correction and drive forward. */
+static void drive_with_correction(sint16 corr)
 {
-    const sint16 DEADBAND_CM = 5;
-    const sint16 MAX_CORRECT = 5;
-    const sint16 GAIN_DIV    = 4;
-
-    /* Skip correction if a side is out of corridor range — straight is safer */
-    if (l > 30u || r > 30u || l < 3u || r < 3u)
-    {
-        Car_moveForward(BASE_SPEED, BASE_SPEED);
-        return;
-    }
-
-    sint16 err = (sint16)l - (sint16)r;
-    if (err > -DEADBAND_CM && err < DEADBAND_CM)
-    {
-        Car_moveForward(BASE_SPEED, BASE_SPEED);
-        return;
-    }
-
-    sint16 corr = err / GAIN_DIV;
+    const sint16 MAX_CORRECT = 22;
     if (corr >  MAX_CORRECT) corr =  MAX_CORRECT;
     if (corr < -MAX_CORRECT) corr = -MAX_CORRECT;
 
@@ -163,6 +147,64 @@ static void apply_recenter(uint16 l, uint16 r)
     if (left  > 255) left  = 255;
     if (right > 255) right = 255;
     Car_moveForward((uint8)left, (uint8)right);
+}
+
+/* P controller that keeps the car centred between (or at a fixed distance
+ * from) the corridor walls.  Used in WALL_FOLLOW and POST_TURN.
+ *
+ *   Both walls in range  → error = L − R, target = centre
+ *   Only one wall in range → error = SIDE_HOLD_CM − seen_wall
+ *                            keeps the car a fixed distance from the lone wall
+ *   No walls in range     → drive straight (rare, transient)
+ *
+ *   correction = error × KP, clamped by drive_with_correction()
+ *   left_speed  = BASE − correction      (positive correction = arc left)
+ *   right_speed = BASE + correction
+ *
+ * Strong enough (≈22 PWM out of 85, ~26 %) to actually pull the car back
+ * toward centre after an imperfect turn, but bounded so it can't spin. */
+static void apply_recenter(uint16 l, uint16 r)
+{
+    const sint16 DEADBAND_CM = 2;
+    const sint16 KP_BOTH     = 2;   /* both-walls gain */
+    const sint16 KP_ONE      = 3;   /* one-wall gain (stronger — only one signal) */
+    const uint16 WALL_VIS_CM = 30u; /* a side ≤ this is considered visible */
+    const uint16 WALL_MIN_CM = 3u;  /* below this = sensor noise / contact */
+
+    boolean l_ok = (l >= WALL_MIN_CM && l <= WALL_VIS_CM);
+    boolean r_ok = (r >= WALL_MIN_CM && r <= WALL_VIS_CM);
+
+    /* Both walls visible — centre between them */
+    if (l_ok && r_ok)
+    {
+        sint16 err = (sint16)l - (sint16)r;
+        if (err > -DEADBAND_CM && err < DEADBAND_CM)
+        {
+            Car_moveForward(BASE_SPEED, BASE_SPEED);
+            return;
+        }
+        drive_with_correction(err * KP_BOTH);
+        return;
+    }
+
+    /* Only left wall — hold SIDE_HOLD_CM from it.  Too close → arc right (corr<0). */
+    if (l_ok)
+    {
+        sint16 err = (sint16)SIDE_HOLD_CM - (sint16)l;  /* + if too close to left */
+        drive_with_correction(-err * KP_ONE);
+        return;
+    }
+
+    /* Only right wall — hold SIDE_HOLD_CM from it.  Too close → arc left (corr>0). */
+    if (r_ok)
+    {
+        sint16 err = (sint16)SIDE_HOLD_CM - (sint16)r;  /* + if too close to right */
+        drive_with_correction(err * KP_ONE);
+        return;
+    }
+
+    /* No walls — drive straight */
+    Car_moveForward(BASE_SPEED, BASE_SPEED);
 }
 
 /* Sliding-window minimum filter for the front sensor.
@@ -209,8 +251,7 @@ static uint32 ms_since_boot(void)
     return (uint32)((now - s_boot_us) / 1000);
 }
 
-/* Poll the UART/BT RX ring buffer for an ASCII '1' (start command).
- * Drains anything else.  Called once per FSM tick while in IDLE. */
+/* Poll the BT RX ring every FSM tick.  '1' starts the run; '2' stops it. */
 static void poll_start_signal(void)
 {
     uint8  rx[16];
@@ -218,11 +259,8 @@ static void poll_start_signal(void)
     uint16 i;
     for (i = 0u; i < n; i++)
     {
-        if (rx[i] == (uint8)'1')
-        {
-            s_start_signal = TRUE;
-            return;
-        }
+        if (rx[i] == (uint8)'1') s_start_signal = TRUE;
+        if (rx[i] == (uint8)'2') s_stop_signal  = TRUE;
     }
 }
 
@@ -273,6 +311,7 @@ static void on_entry(FSM_StateID s)
             s_wf_ticks     = 0u;
             s_l_open_ticks = 0u;
             s_r_open_ticks = 0u;
+            s_stop_ticks   = 0u;
             bluetooth_send("[FSM] WALL_FOLLOW\n");
             break;
 
@@ -288,6 +327,19 @@ static void on_entry(FSM_StateID s)
                            (unsigned long)s_turn_count);
             bluetooth_send(buf);
             printf("%s", buf);
+            if (s_stop_signal && s_turn_seq_len > 0u)
+            {
+                /* Print the turn sequence: [TURNS] L R R L ... (N turns) */
+                char seq_buf[MAX_TURN_SEQ * 2u + 32u];
+                uint32 pos = 0u, j;
+                pos += (uint32)snprintf(seq_buf + pos, sizeof(seq_buf) - pos, "[TURNS] ");
+                for (j = 0u; j < s_turn_seq_len; j++)
+                    pos += (uint32)snprintf(seq_buf + pos, sizeof(seq_buf) - pos,
+                                            "%c ", s_turn_seq[j]);
+                (void)snprintf(seq_buf + pos, sizeof(seq_buf) - pos,
+                               "(%lu turns)\n", (unsigned long)s_turn_seq_len);
+                bluetooth_send(seq_buf);
+            }
             break;
 
         case FSM_STATE_TURN_LEFT:
@@ -296,6 +348,8 @@ static void on_entry(FSM_StateID s)
             s_turn_started = FALSE;
             s_turn_settle  = 0u;
             s_turn_count++;
+            if (s_turn_seq_len < MAX_TURN_SEQ)
+                s_turn_seq[s_turn_seq_len++] = (s == FSM_STATE_TURN_LEFT) ? 'L' : 'R';
             bluetooth_send((s == FSM_STATE_TURN_LEFT) ? "[FSM] TURN_LEFT\n"
                                                        : "[FSM] TURN_RIGHT\n");
             break;
@@ -323,8 +377,11 @@ static FSM_StateID state_idle(void)
     if (!s_idle_init_done)
     {
         Motor_init();
-        /* 70 ms round-robin → each sensor reads once per 210 ms (70×3) */
-        Ultrasonic_initAll(70u);
+        /* 35 ms slot, round-robin pattern is F,L,F,R (length 4):
+         *   FRONT refreshes every 70 ms  (2 slots)
+         *   sides refresh every 140 ms   (4 slots)
+         * Slot must stay ≥ ECHO_TIMEOUT (30 ms) to avoid acoustic crosstalk. */
+        Ultrasonic_initAll(35u);
         MPU6050_init();
         PID_init(&k_pid);
         bluetooth_init("ESP32-Car");
@@ -354,8 +411,6 @@ static FSM_StateID state_idle(void)
         s_armed_msg_sent = TRUE;
     }
 
-    poll_start_signal();
-
     if (s_start_signal)
     {
         bluetooth_send("[GO] start command received\n");
@@ -368,15 +423,39 @@ static FSM_StateID state_idle(void)
 static FSM_StateID state_wall_follow(void)
 {
     static uint32 bt_tick = 0u;
-    const char   *tag     = "STRAIGHT";
-
-    /* PID + STOP disabled — turn-only test mode.
-     * Car drives straight at BASE_SPEED, only transitions on corner detection.
-     * No blank-STOP, no stuck-STOP, no dead-end-STOP. */
+    const char   *tag     = "CENTER";
 
     uint16 f = read_front_filtered();
     uint16 l = read_cm(ULTRASONIC_LEFT);
     uint16 r = read_cm(ULTRASONIC_RIGHT);
+
+    /* === HARD STOP ===
+     * Front is critically close.  Brake the car, hold for STOP_SETTLE_TICKS
+     * so inertia bleeds off and the side sensors stabilize, then commit a
+     * turn toward whichever side has more room.  No reverse, no crawl —
+     * just stop, settle, turn. */
+    if (f <= FRONT_STOP_CM)
+    {
+        Motor_brakeAll();
+        s_l_open_ticks = 0u;
+        s_r_open_ticks = 0u;
+        s_stop_ticks++;
+        if (s_stop_ticks >= STOP_SETTLE_TICKS)
+        {
+            char buf[64];
+            FSM_StateID dir = (l > r) ? FSM_STATE_TURN_LEFT : FSM_STATE_TURN_RIGHT;
+            (void)snprintf(buf, sizeof(buf),
+                           "[HARD STOP] F=%u L=%u R=%u -> %s\n",
+                           (unsigned)f, (unsigned)l, (unsigned)r,
+                           (dir == FSM_STATE_TURN_LEFT) ? "TURN_LEFT" : "TURN_RIGHT");
+            bluetooth_send(buf);
+            s_stop_ticks = 0u;
+            return dir;
+        }
+        tag = "STOP";
+        goto telemetry;
+    }
+    s_stop_ticks = 0u;
 
     /* Approaching a wall — require TURN_CONFIRM_TICKS consecutive ticks
      * with a side ≥ WALL_OPEN_CM before committing. */
@@ -392,7 +471,9 @@ static FSM_StateID state_wall_follow(void)
         if (l_open)           return FSM_STATE_TURN_LEFT;
         if (r_open)           return FSM_STATE_TURN_RIGHT;
 
-        /* No side open — keep crawling slowly forward (no STOP) */
+        /* Front close, side debounce not yet satisfied — crawl forward.
+         * Don't add differential here; centring near a corner would rotate
+         * the heading and confuse the side-debounce. */
         Car_moveForward(SLOW_SPEED, SLOW_SPEED);
         tag = "SLOW";
         goto telemetry;
@@ -400,9 +481,9 @@ static FSM_StateID state_wall_follow(void)
     s_l_open_ticks = 0u;
     s_r_open_ticks = 0u;
 
-    /* Always drive straight — PID disabled */
-    Car_moveForward(BASE_SPEED, BASE_SPEED);
-    tag = "STRAIGHT";
+    /* Open ahead — centre between walls (or hold distance from a single wall) */
+    apply_recenter(l, r);
+    tag = "CENTER";
 
 telemetry:
     if (++bt_tick >= BT_PERIOD_TICKS)
@@ -550,7 +631,11 @@ static FSM_StateID state_wall_lost(void)
 
 static FSM_StateID state_stop(void)
 {
-    /* Turn-only test mode: never stay in STOP, bounce back to WALL_FOLLOW. */
+    if (s_stop_signal)
+    {
+        Motor_brakeAll();
+        return FSM_STATE_STOP;   /* sticky — user must power-cycle to restart */
+    }
     return FSM_STATE_WALL_FOLLOW;
 }
 
@@ -567,10 +652,14 @@ void FSM_init(void)
     s_turn_settle    = 0u;
     s_post_ticks     = 0u;
     s_confirm_ticks  = 0u;
+    s_stop_ticks     = 0u;
     s_idle_init_done = FALSE;
     s_calib_done     = FALSE;
     s_start_signal   = FALSE;
+    s_stop_signal    = FALSE;
     s_armed_msg_sent = FALSE;
+    s_turn_seq_len   = 0u;
+    s_turn_seq[0]    = '\0';
     s_boot_us        = Timer_getTimeUs();
 }
 
@@ -587,6 +676,19 @@ void fsm_task(void *pv)
 
     for (;;)
     {
+        poll_start_signal();
+
+        if (s_stop_signal && s_state != FSM_STATE_STOP)
+        {
+            bluetooth_send("[STOP] '2' received -> halting\n");
+            bt_transition(s_state, FSM_STATE_STOP);
+            on_entry(FSM_STATE_STOP);
+            s_state = FSM_STATE_STOP;
+            Motor_brakeAll();
+            vTaskDelay(pdMS_TO_TICKS(TICK_MS));
+            continue;
+        }
+
         /* Heartbeat — every 100 ticks (5 s) regardless of state */
         if (++hb_ticks >= (5000u / TICK_MS))
         {
